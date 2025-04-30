@@ -19,6 +19,7 @@ import sys
 import types
 import warnings
 from collections import OrderedDict, defaultdict
+from datetime import timedelta
 from enum import Enum
 import inspect
 from typing import Callable, Union, Optional, Dict, List, Any, Tuple, TypedDict
@@ -343,6 +344,7 @@ class NNHandler:
         self._grad_scaler = GradScaler(enabled=False)  # Will be enabled in train() if needed
         self._train_sampler = None  # Initialize DDP samplers
         self._val_sampler = None
+        self._modules_always_eval = []
         self.__logger = None  # Initialize logger
 
         # --- Model Type ---
@@ -484,94 +486,120 @@ class NNHandler:
             return False
 
     def _is_env_distributed(self) -> bool:
-        """Checks if DDP environment variables are set and valid."""
-        required_vars = ['RANK', 'LOCAL_RANK', 'WORLD_SIZE']
-        if not all(var in os.environ for var in required_vars):
-            return False
-        try:
-            rank = int(os.environ['RANK'])
-            local_rank = int(os.environ['LOCAL_RANK'])
-            world_size = int(os.environ['WORLD_SIZE'])
-            # Basic validation
-            if rank < 0 or local_rank < 0 or world_size <= 0 or rank >= world_size:
-                print(f"WARN: Invalid DDP env vars: RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}")
+        """
+        Checks whether the current process has the information it needs to start
+        DistributedDataParallel, coming either from torchrun-style variables
+        (RANK, LOCAL_RANK, WORLD_SIZE) *or* from Slurm.
+        """
+        # -------- 1. Standard torchrun / torch.distributed.launch --------------
+        if all(v in os.environ for v in ('RANK', 'LOCAL_RANK', 'WORLD_SIZE')):
+            try:
+                rank, local_rank, world_size = (
+                    int(os.environ['RANK']),
+                    int(os.environ['LOCAL_RANK']),
+                    int(os.environ['WORLD_SIZE']),
+                )
+            except ValueError:
+                print("WARN: RANK / LOCAL_RANK / WORLD_SIZE are not integers.")
                 return False
-            # DDP makes sense only if world_size > 1
-            return world_size > 1
-        except ValueError:
-            print(f"WARN: Could not parse DDP env vars (RANK, LOCAL_RANK, WORLD_SIZE) as integers.")
+
+        # -------- 2. Slurm fallback --------------------------------------------
+        elif all(v in os.environ for v in ('SLURM_PROCID', 'SLURM_LOCALID', 'SLURM_NTASKS')):
+            try:
+                rank = int(os.environ['SLURM_PROCID'])
+                local_rank = int(os.environ['SLURM_LOCALID'])
+                world_size = int(os.environ['SLURM_NTASKS'])
+            except ValueError:
+                print("WARN: Slurm env vars could not be parsed as integers.")
+                return False
+
+            # Mirror into the regular names so the rest of the pipeline is agnostic
+            os.environ.setdefault('RANK', str(rank))
+            os.environ.setdefault('LOCAL_RANK', str(local_rank))
+            os.environ.setdefault('WORLD_SIZE', str(world_size))
+
+        # -------- 3. Nothing useful found --------------------------------------
+        else:
             return False
+
+        # -------- 4. Sanity checks ---------------------------------------------
+        if rank < 0 or local_rank < 0 or world_size <= 0 or rank >= world_size:
+            print(f"WARN: Invalid DDP values: rank={rank}, local_rank={local_rank}, "
+                  f"world_size={world_size}")
+            return False
+
+        return world_size > 1  # DDP only makes sense if >1 process
 
     def _initialize_distributed(self):
-        """Initializes the DDP process group and sets rank/world size/device."""
+        """
+        Reads rank / local_rank / world_size from the environment (either torchrun
+        or Slurm, thanks to _is_env_distributed) and starts the process group.
+        """
         if not dist.is_available():
-            print("ERROR: torch.distributed is not available. Cannot initialize DDP.")
-            self._distributed = False  # Force disable
+            print("ERROR: torch.distributed is not available. Disabling DDP.")
+            self._distributed = False
             return
 
-        try:
-            # Assumes environment variables are set by the launcher (torchrun, slurm, etc.)
-            self._rank = int(os.environ['RANK'])
-            self._local_rank = int(os.environ['LOCAL_RANK'])
-            self._world_size = int(os.environ['WORLD_SIZE'])
+        # --- Consume the environment ---
+        self._rank = int(os.environ['RANK'])
+        self._local_rank = int(os.environ['LOCAL_RANK'])
+        self._world_size = int(os.environ['WORLD_SIZE'])
 
-            # Determine device based on local rank for GPU, fallback to CPU
-            backend = None
-            if torch.cuda.is_available() and torch.cuda.device_count() >= self._world_size:
-                # Check if enough GPUs are available for the world size on this node?
-                # More robust check: ensure local_rank is valid for the GPUs present
-                if self._local_rank < torch.cuda.device_count():
-                    self._device = torch.device(f"cuda:{self._local_rank}")
-                    torch.cuda.set_device(self._device)  # Crucial for DDP on GPU
-                    backend = 'nccl'  # Preferred backend for NVIDIA GPUs
-                else:
-                    print(
-                        f"WARN (Rank {self._rank}): LOCAL_RANK {self._local_rank} >= CUDA device count {torch.cuda.device_count()}. Falling back to CPU.")
-                    self._device = torch.device("cpu")
-                    self._local_rank = -1  # Indicate CPU usage
-                    backend = 'gloo'  # Gloo is generally better for CPU
+        # --------------------------------- device selection --------------------
+        if torch.cuda.is_available():
+            if torch.cuda.device_count() != 1:
+                self._device = torch.device(f"cuda:0")
             else:
-                print(f"WARN (Rank {self._rank}): CUDA not available or not enough devices. Using CPU for DDP.")
-                self._device = torch.device("cpu")
-                self._local_rank = -1  # Indicate CPU usage
-                backend = 'gloo'
+                self._device = torch.device(f"cuda:{self._local_rank}")
+            torch.cuda.set_device(self._device)
+            backend = "nccl"
+        else:
+            if torch.cuda.is_available():
+                print(f"WARN (Rank {self._rank}): LOCAL_RANK {self._local_rank} "
+                      f"is out of range for {torch.cuda.device_count()} visible GPU(s).")
+            self._device = torch.device("cpu")
+            backend = "gloo"
 
-            # Initialize the process group
-            print(f"INFO (Rank {self._rank}): Initializing DDP Process Group... "
-                  f"Backend: {backend}, Rank: {self._rank}, World Size: {self._world_size}, Device: {self._device}")
+        # -------------- Ensure MASTER_ADDR / MASTER_PORT exist -----------------
+        # Slurm jobs often export MASTER_ADDR automatically when using `srun`.
+        os.environ.setdefault("MASTER_PORT", "29500")
+        if "MASTER_ADDR" not in os.environ:
+            # Fallback: use the first hostname in the node list, if present.
+            nodelist = os.environ.get("SLURM_NODELIST")
+            if nodelist:
+                # e.g. "node[001-004]" -> "node001"
+                import re
+                match = re.match(r"^([^\[]+)\[(\d+)", nodelist)
+                if match:
+                    prefix = match.group(1)
+                    first_number = match.group(2)
+                    first_node = prefix + first_number
+                    os.environ["MASTER_ADDR"] = first_node
+                else:
+                    message = ("No host name in the node list. Please set the host name of the node to be used as a "
+                               "host, i.e., in MASTER_ADDR environment variable.")
+                    print(f"ERROR (Rank {self._rank}): {message}")
+                    raise ValueError(message)
+            else:
+                # As a last resort, use the current host name.
+                import socket
+                os.environ["MASTER_ADDR"] = socket.gethostname()
 
-            dist.init_process_group(backend=backend, rank=self._rank, world_size=self._world_size)
+        # ---------------------------- init -------------------------------------
+        print(f"INFO (Rank {self._rank}): Initializing process group | "
+              f"backend={backend}, world_size={self._world_size}, "
+              f"local_rank={self._local_rank}, device={self._device}")
 
-            print(f"INFO (Rank {self._rank}): DDP Process Group Initialized. Waiting at barrier...")
-            # Barrier to ensure all processes initialized before proceeding
-            dist.barrier()
-            print(f"INFO (Rank {self._rank}): Barrier passed. DDP setup complete.")
+        # A generous timeout helps with slow start-ups on large jobs.
+        dist.init_process_group(
+            backend=backend,
+            rank=self._rank,
+            world_size=self._world_size,
+            timeout=timedelta(minutes=5),
+        )
 
-        except KeyError as e:
-            print(
-                f"ERROR (Rank {os.environ.get('RANK', 'N/A')}): Missing DDP environment variable: {e}. Cannot initialize DDP.",
-                file=sys.stderr)
-            self._distributed = False
-            self._rank = 0
-            self._world_size = 1
-            self._local_rank = -1
-            self._device = self._resolve_device("cuda" if torch.cuda.is_available() else "cpu")
-        except Exception as e:
-            print(f"ERROR (Rank {os.environ.get('RANK', 'N/A')}): Failed to initialize DDP: {e}. Traceback below.",
-                  file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            # Attempt cleanup if partially initialized
-            if dist.is_initialized():
-                dist.destroy_process_group()
-            # Fallback to non-distributed state
-            self._distributed = False
-            self._rank = 0
-            self._world_size = 1
-            self._local_rank = -1
-            self._device = self._resolve_device("cuda" if torch.cuda.is_available() else "cpu")
-            print(
-                f"WARN (Rank {os.environ.get('RANK', 'N/A')}): Falling back to non-distributed mode on device {self._device}.")
+        dist.barrier()  # safety sync
+        print(f"INFO (Rank {self._rank}): DDP initialised and barrier passed.")
 
     def _resolve_device(self, device: Union[torch.device, str]) -> torch.device:
         """Resolves a device string or object, handling CUDA availability."""
@@ -693,6 +721,10 @@ class NNHandler:
         self._seed = seed_value
 
     @property
+    def logger(self) -> logging.Logger:
+        return self.__logger
+
+    @property
     def model(self) -> Optional[nn.Module]:
         """Returns the model instance (potentially wrapped by DDP or DataParallel)."""
         return self._model
@@ -705,6 +737,10 @@ class NNHandler:
         if isinstance(self._model, (DDP, nn.DataParallel)):
             return self._model.module
         return self._model
+
+    @property
+    def modules_always_eval(self):
+        return self._modules_always_eval
 
     @property
     def model_kwargs(self) -> Optional[Dict[str, Any]]:
@@ -1071,7 +1107,7 @@ class NNHandler:
         if self.__logger:  # Log on rank 0
             self.__logger.info(
                 f"Created DDP DataLoader ({'Eval' if is_eval else 'Train'}) for {type(dataset).__name__}: "
-                f"Shuffle={shuffle}, DropLast={drop_last}, "
+                f"Shuffle={shuffle}, DropLast={drop_last}, BatchSize={loader_kwargs['batch_size']}, "
                 f"Workers={new_loader_kwargs['num_workers']}, PinMem={new_loader_kwargs['pin_memory']}, "
                 f"PersistWrk={new_loader_kwargs['persistent_workers']}")
 
@@ -1573,7 +1609,7 @@ class NNHandler:
         if self._model is None or self._loss_fn is None:
             raise RuntimeError("Model and loss function must be set for validation.")
 
-        self._model.eval()  # Ensure model is in evaluation mode
+        self.eval(activate=True, log=False)  # Ensure model is in evaluation mode
 
         batch_data = self._prepare_batch(batch)
         inputs = batch_data["inputs"]
@@ -1741,7 +1777,7 @@ class NNHandler:
             self._run_callbacks('on_epoch_begin', epoch=epoch, logs=epoch_logs)
 
             # ================== Training Phase ==================
-            self._model.train()  # Set model to train mode
+            self.eval(activate=False, log=False)  # Set model to train mode
             # Accumulators for local results on this rank
             train_loss_accum_local = 0.0
             train_metrics_accum_local = defaultdict(float)
@@ -1922,7 +1958,7 @@ class NNHandler:
                 # Use context manager to automatically restore weights after
                 ema_context = self._ema.average_parameters() if self._ema else contextlib.nullcontext()
                 with ema_context:
-                    self._model.eval()  # Ensure eval mode inside EMA context if needed
+                    self.eval(activate=True, log=False)  # Ensure eval mode inside EMA context if needed
                     for val_batch_idx, val_batch_data in val_iterator:
                         # Determine batch size for logging
                         batch_size = -1
@@ -2143,8 +2179,6 @@ class NNHandler:
     def _auto_save_epoch(self, epoch: int, total_epochs: int, save_on_last_epoch: bool, logs: Dict[str, Any]):
         """Handles the logic for auto-saving the model state (only executed on rank 0)."""
         # Explicit rank check, though this method is called within rank 0 block in train()
-        if self._rank != 0:
-            return
         if self._auto_saver.save_interval is None or self._auto_saver.save_path is None:
             return  # Auto-save disabled
 
@@ -2192,6 +2226,9 @@ class NNHandler:
             # Perform save using the main save method
             self.save(save_path)  # save() is rank 0 aware
 
+            if self._rank != 0:
+                return
+
             # Handle overwriting previous auto-save file
             # Check if overwrite enabled, if a previous file exists, and if it's different from the current save
             if self._auto_saver.overwrite_last_saved and \
@@ -2238,8 +2275,6 @@ class NNHandler:
             if self._model is None:
                 warnings.warn("Attempting to save handler state, but model is missing. Skipping save.", RuntimeWarning)
                 # Ensure barrier is still hit even if save is skipped
-                if self._distributed:
-                    dist.barrier()
                 return
 
             # Ensure directory exists
@@ -2250,7 +2285,6 @@ class NNHandler:
             except OSError as e:
                 if self.__logger:
                     self.__logger.error(f"Could not create directory for saving state to {path}: {e}")
-                # Raise error as saving cannot proceed
                 raise e
 
             # --- Prepare State Dictionary ---
@@ -2304,10 +2338,11 @@ class NNHandler:
 
                 # Callback States (Callbacks should implement state_dict/load_state_dict)
                 # Save states from callbacks present on rank 0
+                "callback_classes": {cb.__class__.__name__: cb.__class__ for cb in self._callbacks},
                 "callback_states": {cb.__class__.__name__: cb.state_dict() for cb in self._callbacks},
 
                 # Versioning / Metadata
-                "nn_handler_version": "2.1_ddp",  # Mark version for DDP compatibility
+                "nn_handler_version": "2.2_ddp",  # Mark version for DDP compatibility
                 "pytorch_version": torch.__version__,
             }
 
@@ -2320,15 +2355,7 @@ class NNHandler:
                 if self.__logger:
                     self.__logger.error(f"Rank {self._rank} failed to save NNHandler state to {path}: {e}",
                                         exc_info=True)
-                # Ensure barrier is still hit even if save fails on rank 0
-                if self._distributed:
-                    dist.barrier()
                 raise e  # Re-raise the exception after logging
-
-        # --- Barrier ---
-        # All ranks wait here. Rank 0 proceeds after saving, others wait for it.
-        if self._distributed:
-            dist.barrier()
 
     @staticmethod
     def load(path: str,
@@ -2616,16 +2643,19 @@ class NNHandler:
 
         # Callbacks State (Load state into *existing* callbacks)
         # Assumes user adds the *same* callbacks *before* calling load.
+        callback_classes = state.get("callback_classes", {})
         callback_states = state.get("callback_states", {})
         if not skip_callbacks:
-            if handler._callbacks and callback_states:
+            if callback_classes and callback_states:
                 loaded_cb_names = set()
-                for cb in handler._callbacks:  # Iterate through callbacks already added to the handler
-                    cb_name = cb.__class__.__name__
+                for cb_name, cb_class in callback_classes.items():  # Iterate through callbacks already added to the handler
                     if cb_name in callback_states:
                         try:
+                            cb = cb_class()
                             cb.load_state_dict(callback_states[cb_name])
                             loaded_cb_names.add(cb_name)
+                            handler.add_callback(cb)
+                            if handler.__logger: handler.__logger.info(f" Callback '{cb_name}' state loaded.")
                             # Log loaded state on rank 0 only
                             if handler.__logger:
                                 handler.__logger.debug(f" Loaded state for callback '{cb_name}'.")
@@ -2638,11 +2668,11 @@ class NNHandler:
                     unmatched_states = set(callback_states.keys()) - loaded_cb_names
                     if unmatched_states:
                         warnings.warn(
-                            f"Callback states found in checkpoint but not loaded (no matching callback added): {unmatched_states}",
+                            f"Callback states found in checkpoint but not loaded (no matching callback class existed in the saved file): {unmatched_states}",
                             RuntimeWarning)
             elif callback_states and handler._rank == 0:  # Check if states exist but no callbacks added
                 warnings.warn(
-                    "Callback states found in checkpoint, but no callbacks currently added to the handler instance. States not loaded.",
+                    "Callback states found in checkpoint, but no callbacks class currently saved in the handler instance. States not loaded.",
                     RuntimeWarning)
 
         # Other config loaded on all ranks
@@ -2935,6 +2965,21 @@ class NNHandler:
         # self.model() correctly calls the forward method of the wrapped/unwrapped model
         return self.model(*args, **kwargs)
 
+    def freeze_module(self, module: nn.Module, verbose: bool = False) -> None:
+        """
+        Freezes the parameters of a given PyTorch module.
+
+        Args:
+            module: The PyTorch module (e.g., a layer or the entire model) to freeze.
+        """
+        if self.__logger:
+            self.__logger.info(f"Freezing parameters for module: {module.__class__.__name__}")
+        for param in module.parameters():
+            param.requires_grad = False
+        if self.__logger:
+            self.__logger.info(
+                f"Module parameters frozen. Model now contains {self.count_parameters(True)} trainable parameters.")
+
     @torch.no_grad()
     def predict(self, data_loader: DataLoader, apply_ema: bool = True) -> Optional[List[Any]]:
         """
@@ -2971,7 +3016,7 @@ class NNHandler:
                         "Predicting in DDP mode with a shuffled DistributedSampler. Gathered results might not be in the original dataset order.",
                         RuntimeWarning)
 
-        self._model.eval()  # Set model to evaluation mode
+        self.eval(activate=True, log=False)  # Set model to evaluation mode
         local_predictions = []  # Predictions collected on this rank
 
         # Progress bar only on rank 0
@@ -3106,20 +3151,43 @@ class NNHandler:
         # Return collected predictions only on Rank 0
         return all_predictions if is_rank_0 else None
 
-    def eval(self, activate: bool = True):
+    def eval(self, activate: bool = True, log:bool = True):
         """Sets model to evaluation or training mode (all ranks)."""
         if self._model is None:
             return
         if activate:
             self._model.eval()
             # Log only on rank 0
-            if self.__logger:
+            if self.__logger and log:
                 self.__logger.info(f"Model set to eval() mode (Rank {self._rank}).")
         else:
             self._model.train()
+            for module in self._modules_always_eval:
+                module.eval()
             # Log only on rank 0
-            if self.__logger:
+            if self.__logger and log:
                 self.__logger.info(f"Model set to train() mode (Rank {self._rank}).")
+
+    def keep_eval_on_module(self, module: nn.Module, activate: bool = True):
+        """
+        Manages a module's evaluation state by ensuring it always remains in evaluation mode or returns
+        to training mode when specified. The method modifies an internal list that tracks modules set
+        to always remain in evaluation mode.
+
+        Args:
+            module (nn.Module): The neural network module whose evaluation state needs
+                to be managed.
+            activate (bool): A flag indicating whether to keep the module in evaluation
+                mode (True) or allow it to return to training mode (False). Defaults to True.
+        """
+        if activate and module not in self._modules_always_eval:
+            self._modules_always_eval.append(module)
+            module.eval()
+        elif activate is False and module in self._modules_always_eval:
+            self._modules_always_eval.remove(module)
+            module.train()
+        else:
+            print(f"keep_eval_on_module: Module {module} is already in {self._modules_always_eval}.")
 
     def count_parameters(self, trainable_only: bool = True) -> int:
         """Counts model parameters (uses the underlying unwrapped module)."""
@@ -3486,7 +3554,7 @@ class NNHandler:
         if self._model is None: raise RuntimeError("Model must be set for sampling.")
 
         if condition is None: condition = []  # Ensure condition is a list
-        self.eval()  # Set model to evaluation mode
+        self.eval(activate=True, log=False)  # Set model to evaluation mode
 
         # TQDM setup (rank 0 only)
         tqdm_module = None
@@ -3625,7 +3693,7 @@ class NNHandler:
         if self._sde is None: raise RuntimeError("SDE must be set for log-likelihood estimation.")
         if self._model is None: raise RuntimeError("Model must be set for log-likelihood estimation.")
 
-        self.eval()  # Ensure model is in eval mode
+        self.eval(activate=True, log=False)  # Ensure model is in eval mode
 
         # Set default integration times if not provided
         t_start = t0 if t0 is not None else self._sde.epsilon
