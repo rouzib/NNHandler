@@ -1,4 +1,6 @@
 torch>=2.0
-torch_ema
+torch_ema>=0.3
 matplotlib
 tqdm
+cloudpickle>=3.0.0
+numpy

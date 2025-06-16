@@ -1,13 +1,13 @@
-import os
+import functools
 import warnings
-from datetime import timedelta
 from functools import wraps
-from typing import Union, Optional, List
+from typing import Union, List, Callable, Any
 
 import torch
 import torch.distributed as dist
-from torch import nn
 import torch.multiprocessing as mp
+from torch import nn
+import cloudpickle as _cp
 
 
 def on_rank(rank: Union[int, List[int]], barrier: bool = False):
@@ -135,86 +135,70 @@ def parallel_on_all_devices(func):
     return wrapper
 
 
-# This worker function must be a top-level function so it can be pickled
-# and sent to the new processes.
-def _parallel_worker(rank, user_func, result_queue):
-    """
-    Internal worker that runs in a separate process.
-    - rank: The process index, which we use as the GPU index.
-    - user_func: The user-provided function to execute.
-    - result_queue: A queue to send the result back to the main process.
-    """
+def _parallel_worker(rank, pickled_user_func, result_queue):
     try:
-        device = f'cuda:{rank}'
+        user_func = _cp.loads(pickled_user_func)
+        device = torch.device(f'cuda:{rank}')
         torch.cuda.set_device(device)
-        # Execute the user's function, passing the device name to it
+
+        # Ensure CUDA ops are complete before moving to CPU
         result = user_func(device=device)
-        result_queue.put({'rank': rank, 'result': result})
+        torch.cuda.synchronize(device)
+
+        result_queue.put({'rank': rank, 'result': _as_cpu(result)})
     except Exception as e:
-        result_queue.put({'rank': rank, 'error': e})
+        import traceback
+        error_str = f"Error in process for GPU {rank}:\n{repr(e)}\n{traceback.format_exc()}"
+        result_queue.put({'rank': rank, 'error': error_str})
+    finally:
+        # A final synchronization can help ensure graceful exit.
+        try:
+            torch.cuda.synchronize(device)
+        except (AttributeError, RuntimeError):
+            pass
+
+
+def _as_cpu(obj: Any) -> Any:
+    if torch.is_tensor(obj):
+        return obj.detach().to("cpu")
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(_as_cpu(x) for x in obj)
+    if isinstance(obj, dict):
+        return {k: _as_cpu(v) for k, v in obj.items()}
+    return obj
 
 
 class ParallelExecutor:
-    """
-    A context manager to execute a function in parallel on multiple GPUs.
-
-    This is for general-purpose parallel execution, not for model training. It's
-    useful when you want to run the same code independently on several GPUs,
-    for instance, for parallel data generation or simulations.
-
-    Usage:
-        def my_task(device):
-            # This code will run on a specific GPU (e.g., 'cuda:0')
-            data = torch.randn(5, device=device)
-            return data.cpu() # Return data to the main process
-
-        with ParallelExecutor() as executor:
-            # .run() executes my_task on all available GPUs.
-            results = executor.run(my_task)
-
-        all_data = torch.cat(results)
-    """
-
     def __init__(self, num_gpus: int = None):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for parallel execution.")
-
         self.num_gpus = num_gpus if num_gpus is not None else torch.cuda.device_count()
         if self.num_gpus <= 0:
             raise ValueError("Number of GPUs must be positive.")
-
-        # 'spawn' is the required start method for CUDA multiprocessing
+        # We use torch.multiprocessing which defaults to and requires 'spawn'.
+        # This check ensures we're in the right environment.
         if mp.get_start_method(allow_none=True) is None:
             mp.set_start_method("spawn", force=True)
         elif mp.get_start_method() != "spawn":
             warnings.warn(
-                f"Warning: multiprocessing start method is '{mp.get_start_method()}', but 'spawn' is required for CUDA.")
+                f"Multiprocessing start method is '{mp.get_start_method()}', but 'spawn' is required for CUDA.")
 
-    def run(self, func):
-        """
-        Executes the given function on each GPU in parallel.
-
-        The function `func` must accept a keyword argument `device` (str),
-        which will be the device name like 'cuda:0', 'cuda:1', etc.
-
-        Args:
-            func: A callable function to execute on each GPU.
-
-        Returns:
-            A list of results from each process, ordered by device index.
-        """
+    def run(self, func, *args, **kwargs):
         if not callable(func):
             raise TypeError("The provided object must be a callable function.")
 
-        ctx = mp.get_context('spawn')
-        result_queue = ctx.Queue()
+        task_with_args = functools.partial(func, *args, **kwargs)
+        pickled_task = _cp.dumps(task_with_args)
 
-        processes = [ctx.Process(target=_parallel_worker, args=(rank, func, result_queue)) for rank in
-                     range(self.num_gpus)]
+        # Use torch.multiprocessing.Queue
+        result_queue = mp.Queue()
+
+        # Use torch.multiprocessing.Process
+        processes = [mp.Process(target=_parallel_worker, args=(rank, pickled_task, result_queue))
+                     for rank in range(self.num_gpus)]
         for p in processes:
             p.start()
 
-        # Collect results and potential errors
         results_map = {}
         errors = []
         for _ in range(self.num_gpus):
@@ -224,55 +208,35 @@ class ParallelExecutor:
             else:
                 results_map[output['rank']] = output['result']
 
-        # Ensure all processes are cleaned up before proceeding
+        # The torch.multiprocessing process .join() is more robust.
         for p in processes:
             p.join()
 
-        # After cleanup, check if any errors were reported
         if errors:
-            error_messages = "\n".join([f"  - GPU {e['rank']}: {e['error']}" for e in errors])
+            error_messages = "\n\n".join([e['error'] for e in sorted(errors, key=lambda x: x['rank'])])
             raise RuntimeError(f"One or more parallel processes failed:\n{error_messages}")
 
-        # Return results, sorted by the GPU index to ensure order
         return [results_map[i] for i in range(self.num_gpus)]
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        pass  # Nothing to clean up
+        pass
 
 
 def parallelize_on_gpus(num_gpus: int = None):
     """
-    A decorator to run a function in parallel on multiple GPUs.
-
-    The decorated function must accept a `device` keyword argument. The decorator
-    will automatically provide this argument when executing the function on each GPU.
-
-    Args:
-        num_gpus (int, optional): The number of GPUs to use. If None, uses all
-                                  available GPUs.
-
-    Returns:
-        A list of the results from each parallel execution, ordered by device.
+    A decorator to run a function in parallel on multiple GPUs, designed to
+    work robustly in interactive environments by using cloudpickle and
+    torch.multiprocessing.
     """
 
-    def decorator(user_func):
-        @wraps(user_func)
-        def wrapper(*args, **kwargs):
-            # This is the function that will be executed inside each new process.
-            # It accepts the `device` argument from the ParallelExecutor's worker.
-            def task_on_gpu(device):
-                # Call the original user function, passing along the original
-                # arguments and injecting the new device argument.
-                return user_func(*args, **kwargs, device=device)
-
-            # Use the existing ParallelExecutor to run the task.
+    def decorator(user_func: Callable) -> Callable:
+        @functools.wraps(user_func)
+        def wrapper(*args: Any, **kwargs: Any) -> list:
             with ParallelExecutor(num_gpus=num_gpus) as executor:
-                results = executor.run(task_on_gpu)
-
-            return results
+                return executor.run(user_func, *args, **kwargs)
 
         return wrapper
 
