@@ -1,0 +1,6 @@
+torch>=1.10.0
+
+[full]
+torch_ema
+matplotlib
+tqdm

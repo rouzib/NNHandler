@@ -3586,7 +3586,7 @@ class NNHandler:
             f"Log-likelihood estimation finished. Mean logp: {log_p.mean().item():.4f}")
         return log_p
 
-# --- Example Usage Helper Function ---
+# --- Example Usage Helper Function (from nn_handler.py, adapted slightly) ---
 # Note: Callbacks like ModelCheckpoint, EarlyStopping, TensorBoardLogger
 # would need to be imported separately and potentially adapted for DDP awareness
 # (e.g., saving/logging only on rank 0). For simplicity, they are omitted here.

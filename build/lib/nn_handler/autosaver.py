@@ -197,6 +197,7 @@ def load_model_code(path: str) -> Tuple[Optional[str], Optional[str]]:
     """Loads model code and module name from a saved state file (Helper)."""
     # This method is static and doesn't interact with instance state directly.
     # It reads the file path provided.
+    # The implementation from nn_handler.py can be used here directly.
     from io import BytesIO
     import zipfile
     import pickle
@@ -205,6 +206,7 @@ def load_model_code(path: str) -> Tuple[Optional[str], Optional[str]]:
         raise FileNotFoundError(f"File not found: {path}")
 
     # Define a robust unpickler that tries to ignore missing classes/storages
+    # (Same as in nn_handler.py)
     class RobustUnpickler(pickle.Unpickler):
         def find_class(self, module, name):
             try:
