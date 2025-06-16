@@ -111,11 +111,6 @@ handler.save("models/final_handler_state.pth")
 # predictions = loaded_handler.predict(some_data_loader) # Predict gathers on Rank 0
 ```
 *(Remember to run DDP examples using `torchrun`)*
-
-## Contributing
-
-Contributions are welcome! Please refer to `CONTRIBUTING.md` (if available) for guidelines.
-
 ## License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
