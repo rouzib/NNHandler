@@ -135,14 +135,14 @@ def parallel_on_all_devices(func):
     return wrapper
 
 
-def _parallel_worker(rank, pickled_user_func, result_queue):
+def _parallel_worker(rank, pickled_user_func, result_queue, pass_device):
     try:
         user_func = _cp.loads(pickled_user_func)
         device = torch.device(f'cuda:{rank}')
         torch.cuda.set_device(device)
 
         # Ensure CUDA ops are complete before moving to CPU
-        result = user_func(device=device)
+        result = user_func(device=device) if pass_device else user_func()
         torch.cuda.synchronize(device)
 
         result_queue.put({'rank': rank, 'result': _as_cpu(result)})
@@ -169,10 +169,11 @@ def _as_cpu(obj: Any) -> Any:
 
 
 class ParallelExecutor:
-    def __init__(self, num_gpus: int = None):
+    def __init__(self, num_gpus: int = None, pass_device: bool = True):
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for parallel execution.")
         self.num_gpus = num_gpus if num_gpus is not None else torch.cuda.device_count()
+        self.pass_device = pass_device
         if self.num_gpus <= 0:
             raise ValueError("Number of GPUs must be positive.")
         # We use torch.multiprocessing which defaults to and requires 'spawn'.
@@ -194,7 +195,7 @@ class ParallelExecutor:
         result_queue = mp.Queue()
 
         # Use torch.multiprocessing.Process
-        processes = [mp.Process(target=_parallel_worker, args=(rank, pickled_task, result_queue))
+        processes = [mp.Process(target=_parallel_worker, args=(rank, pickled_task, result_queue, self.pass_device))
                      for rank in range(self.num_gpus)]
         for p in processes:
             p.start()
@@ -225,17 +226,22 @@ class ParallelExecutor:
         pass
 
 
-def parallelize_on_gpus(num_gpus: int = None):
+def parallelize_on_gpus(num_gpus: int = None, pass_device: bool = True):
     """
     A decorator to run a function in parallel on multiple GPUs, designed to
     work robustly in interactive environments by using cloudpickle and
     torch.multiprocessing.
+
+    Note:
+        If encountering a EOFError, the torch multiprocessing kernel gets stopped prematurely and the results can't be
+        shared between the processes. Try converting the results of your function to a list or a numpy array before
+        returning.
     """
 
     def decorator(user_func: Callable) -> Callable:
         @functools.wraps(user_func)
         def wrapper(*args: Any, **kwargs: Any) -> list:
-            with ParallelExecutor(num_gpus=num_gpus) as executor:
+            with ParallelExecutor(num_gpus=num_gpus, pass_device=pass_device) as executor:
                 return executor.run(user_func, *args, **kwargs)
 
         return wrapper
