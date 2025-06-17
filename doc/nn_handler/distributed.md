@@ -89,3 +89,12 @@ Callbacks intended for DDP should often include an internal check (`if self.hand
 *   **`find_unused_parameters`**: If your model has parameters that do not receive gradients during the forward pass (e.g., in certain conditional execution paths), DDP might hang during the backward pass. Setting the environment variable `DDP_FIND_UNUSED_PARAMETERS=true` before launching your script can resolve this, although it adds some overhead. NNHandler reads this environment variable.
 *   **State Loading**: When loading a checkpoint using `handler.load()`, ensure the script is launched with the same DDP configuration (number of processes) as the training run that produced the checkpoint, unless you are intentionally loading only parts of the state (e.g., model weights) into a different setup.
 *   **Non-Tensor Data**: Gathering non-tensor data across ranks (e.g., lists of strings or complex objects in prediction) uses `dist.gather_object`, which can be less efficient and consume more memory on Rank 0 compared to tensor operations like `dist.gather` or `dist.all_gather`.
+
+## Standalone DDP Utilities
+
+If you need to use DDP functionality independently of the `NNHandler` class, the framework provides a set of utilities in the `nn_handler.utils` package:
+
+*   **DDP Core Utilities** (`nn_handler.utils.ddp`): Functions for initializing and managing DDP processes, resolving devices, and determining whether to use distributed training.
+*   **DDP Decorators** (`nn_handler.utils.ddp_decorators`): Decorators and classes for executing functions in parallel across multiple GPUs, with robust error handling and synchronization.
+
+For detailed documentation on these utilities, see the [DDP Utilities Documentation](utils/ddp_utils.md).

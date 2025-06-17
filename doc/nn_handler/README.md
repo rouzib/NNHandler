@@ -33,6 +33,11 @@ The `nn_handler` module simplifies the process of working with PyTorch models by
     *   A flexible system to inject custom logic at various points in the training lifecycle (e.g., start/end of epoch/batch, saving checkpoints, logging metrics, early stopping).
     *   Callbacks inherit from the base `Callback` class.
 
+*   **Utilities ([utils/README.md](utils/README.md))**:
+    *   A collection of utility functions and classes that support the core functionality of the framework.
+    *   Includes DDP utilities for working with PyTorch's Distributed Data Parallel functionality.
+    *   Can be used both within the framework and independently in your own PyTorch code.
+
 ## Further Reading
 
 *   [Getting Started Guide](../getting_started.md)
@@ -41,3 +46,4 @@ The `nn_handler` module simplifies the process of working with PyTorch models by
 *   [AutoSaver Feature Details](autosaver.md)
 *   [Sampler Integration Guide](sampler.md)
 *   [Callbacks System Overview](callbacks/README.md)
+*   [Utilities Documentation](utils/README.md)

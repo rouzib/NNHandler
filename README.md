@@ -43,6 +43,7 @@ The framework revolves around the central `NNHandler` class and its supporting m
 *   **AutoSaver ([nn_handler/autosaver.md](doc/nn_handler/autosaver.md))**: Functionality for automatic checkpoint saving during training (integrated within `NNHandler`).
 *   **Sampler ([nn_handler/sampler.md](doc/nn_handler/sampler.md))**: Support for custom sampling algorithms via the `Sampler` base class.
 *   **Callbacks ([nn_handler/callbacks/README.md](doc/nn_handler/callbacks/README.md))**: A powerful system for customizing the training loop with various hooks.
+*   **Utilities ([nn_handler/utils/README.md](doc/nn_handler/utils/README.md))**: A collection of utility functions and classes, including DDP utilities for working with PyTorch's Distributed Data Parallel functionality.
 
 ## Documentation Structure
 
@@ -53,6 +54,7 @@ The framework revolves around the central `NNHandler` class and its supporting m
     *   [AutoSaver Feature](doc/nn_handler/autosaver.md): Auto-saving configuration.
     *   [Sampler Integration](doc/nn_handler/sampler.md): Using custom samplers.
     *   [Callbacks System](doc/nn_handler/callbacks/README.md): Introduction to callbacks and available implementations.
+    *   [Utilities](doc/nn_handler/utils/README.md): Documentation for utility functions and classes, including DDP utilities.
 
 ## Basic Usage Example
 

@@ -8,7 +8,24 @@ import torch.distributed as dist
 
 
 def _should_use_distributed(use_distributed_flag: Optional[bool]) -> bool:
-    """Determines if DDP should be used based on flag and environment."""
+    """
+    Determines if Distributed Data Parallel (DDP) should be used based on flag and environment.
+
+    This function checks if DDP should be enabled based on the provided flag and the current
+    environment. It handles three cases:
+    1. If use_distributed_flag is False: DDP is disabled
+    2. If use_distributed_flag is True: DDP is enabled if available and environment is valid
+    3. If use_distributed_flag is None (auto-detect): DDP is enabled if available and environment is valid
+
+    Args:
+        use_distributed_flag (Optional[bool]): Flag to control DDP usage.
+            - True: Explicitly enable DDP (if possible)
+            - False: Explicitly disable DDP
+            - None: Auto-detect based on environment
+
+    Returns:
+        bool: True if DDP should be used, False otherwise.
+    """
     env_is_distributed = _is_env_distributed()
 
     if use_distributed_flag is False:
@@ -87,8 +104,27 @@ def _is_env_distributed() -> bool:
 
 def _initialize_distributed(timeout: Optional[timedelta] = None):
     """
-    Reads rank / local_rank / world_size from the environment (either torchrun
-    or Slurm, thanks to _is_env_distributed) and starts the process group.
+    Initialize the distributed process group for PyTorch Distributed Data Parallel (DDP).
+
+    This function reads rank, local_rank, and world_size from the environment variables
+    (set by either torchrun, torch.distributed.launch, or Slurm) and initializes the
+    distributed process group. It handles device selection based on the local_rank
+    and available CUDA devices, and ensures that MASTER_ADDR and MASTER_PORT are set.
+
+    Args:
+        timeout (Optional[timedelta]): Timeout for operations. If None, defaults to 60 minutes.
+            This is particularly important for large jobs that may take time to start up.
+
+    Returns:
+        tuple: A 5-tuple containing:
+            - _distributed (bool): Whether distributed mode is enabled
+            - _rank (int): Global rank of this process
+            - _local_rank (int): Local rank of this process (for device selection)
+            - _world_size (int): Total number of processes
+            - _device (torch.device): The device to use for this process
+
+    Raises:
+        ValueError: If the MASTER_ADDR cannot be determined from the environment.
     """
     if not dist.is_available():
         print("ERROR: torch.distributed is not available. Disabling DDP.")
@@ -163,8 +199,30 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
 
 def initialize_ddp(timeout: Optional[timedelta] = None):
     """
-    Initializes the DDP process group if not already done.
-    This is a static method to allow external calls without needing an instance.
+    Initialize the Distributed Data Parallel (DDP) process group if not already done.
+
+    This function serves as a public entry point for initializing DDP. It checks if
+    the process group is already initialized, and if not, attempts to initialize it
+    with the appropriate settings. It's designed to be called directly without needing
+    an instance of any class.
+
+    Args:
+        timeout (Optional[timedelta]): Timeout for operations. If None, defaults to 60 minutes.
+            This is particularly important for large jobs that may take time to start up.
+
+    Returns:
+        Union[tuple, None]: 
+            - If DDP was not initialized before: Returns a 5-tuple containing:
+                - distributed (bool): Whether distributed mode is enabled
+                - rank (int): Global rank of this process
+                - local_rank (int): Local rank of this process (for device selection)
+                - world_size (int): Total number of processes
+                - device (torch.device): The device to use for this process
+            - If DDP was already initialized: Returns None
+
+    Note:
+        This function always attempts to use DDP (by passing True to _should_use_distributed)
+        unless the process group is already initialized.
     """
     if not dist.is_initialized():
         if _should_use_distributed(True):
@@ -177,7 +235,29 @@ def initialize_ddp(timeout: Optional[timedelta] = None):
 
 
 def _resolve_device(device: Union[torch.device, str]) -> torch.device:
-    """Resolves a device string or object, handling CUDA availability."""
+    """
+    Resolve a device specification to a torch.device object, handling CUDA availability.
+
+    This function takes a device specification (either a string like 'cuda', 'cuda:0', 'cpu',
+    or a torch.device object) and resolves it to a valid torch.device object. It handles
+    cases where CUDA is requested but not available by falling back to CPU.
+
+    Args:
+        device (Union[torch.device, str]): The device specification to resolve.
+            - If a torch.device: Validates it and returns it (or falls back to CPU if needed)
+            - If a string: Converts it to a torch.device (with special handling for 'cuda' and 'gpu')
+
+    Returns:
+        torch.device: The resolved device object.
+
+    Raises:
+        TypeError: If the device is neither a string nor a torch.device.
+        ValueError: If the device string is invalid.
+
+    Note:
+        If CUDA is requested but not available, this function will issue a warning
+        and fall back to CPU instead of raising an error.
+    """
     if isinstance(device, torch.device):
         # If CUDA specified but not available, warn and use CPU
         if device.type == 'cuda' and not torch.cuda.is_available():

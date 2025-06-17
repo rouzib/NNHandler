@@ -136,6 +136,22 @@ def parallel_on_all_devices(func):
 
 
 def _parallel_worker(rank, pickled_user_func, result_queue, pass_device):
+    """
+    Internal worker function for parallel execution on a specific GPU.
+
+    This function is executed in a separate process for each GPU. It unpickles the user function,
+    sets up the appropriate CUDA device, executes the function, and puts the result in the queue.
+
+    Args:
+        rank (int): The GPU rank/index to use for this worker.
+        pickled_user_func (bytes): The cloudpickle-serialized user function to execute.
+        result_queue (multiprocessing.Queue): Queue to put results or errors into.
+        pass_device (bool): If True, pass the device as an argument to the user function.
+
+    Note:
+        This function handles exceptions by capturing them and putting error information
+        in the result queue instead of the result.
+    """
     try:
         user_func = _cp.loads(pickled_user_func)
         device = torch.device(f'cuda:{rank}')
@@ -159,6 +175,28 @@ def _parallel_worker(rank, pickled_user_func, result_queue, pass_device):
 
 
 def _as_cpu(obj: Any) -> Any:
+    """
+    Recursively moves PyTorch tensors to CPU, handling nested data structures.
+
+    This utility function detaches tensors and moves them to CPU. It works recursively
+    through lists, tuples, and dictionaries to handle nested data structures.
+
+    Args:
+        obj (Any): The object to process. Can be a tensor, list, tuple, dict, or any other type.
+            - If a tensor: detaches it and moves it to CPU
+            - If a list/tuple: processes each element recursively
+            - If a dict: processes each value recursively
+            - Otherwise: returns the object unchanged
+
+    Returns:
+        Any: The processed object with all tensors moved to CPU.
+
+    Example:
+        >>> tensor_on_gpu = torch.tensor([1, 2, 3]).cuda()
+        >>> nested_structure = {'a': tensor_on_gpu, 'b': [tensor_on_gpu, 10]}
+        >>> cpu_structure = _as_cpu(nested_structure)
+        # All tensors in cpu_structure are now on CPU
+    """
     if torch.is_tensor(obj):
         return obj.detach().to("cpu")
     if isinstance(obj, (list, tuple)):
@@ -169,7 +207,33 @@ def _as_cpu(obj: Any) -> Any:
 
 
 class ParallelExecutor:
+    """
+    A class for executing functions in parallel across multiple GPUs.
+
+    This class manages the creation of separate processes for each GPU, executes
+    a function on each GPU, and collects the results. It handles process creation,
+    error handling, and result aggregation.
+
+    The class can be used as a context manager with the `with` statement.
+
+    Attributes:
+        num_gpus (int): Number of GPUs to use for parallel execution.
+        pass_device (bool): Whether to pass the device as an argument to the function.
+    """
+
     def __init__(self, num_gpus: int = None, pass_device: bool = True):
+        """
+        Initialize the ParallelExecutor.
+
+        Args:
+            num_gpus (int, optional): Number of GPUs to use. If None, uses all available GPUs.
+            pass_device (bool, optional): If True, passes the device as an argument to the function.
+                Defaults to True.
+
+        Raises:
+            RuntimeError: If CUDA is not available.
+            ValueError: If the number of GPUs is not positive.
+        """
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for parallel execution.")
         self.num_gpus = num_gpus if num_gpus is not None else torch.cuda.device_count()
@@ -185,6 +249,29 @@ class ParallelExecutor:
                 f"Multiprocessing start method is '{mp.get_start_method()}', but 'spawn' is required for CUDA.")
 
     def run(self, func, *args, **kwargs):
+        """
+        Execute a function in parallel across multiple GPUs.
+
+        This method creates a separate process for each GPU, executes the function
+        on each GPU, and collects the results. It handles process creation, error
+        handling, and result aggregation.
+
+        Args:
+            func (callable): The function to execute in parallel.
+            *args: Positional arguments to pass to the function.
+            **kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            list: A list of results from each GPU, in order of GPU index.
+
+        Raises:
+            TypeError: If the provided object is not callable.
+            RuntimeError: If one or more parallel processes fail.
+
+        Note:
+            If `pass_device=True` was set during initialization, the function will
+            receive a `device` argument with the appropriate CUDA device for each process.
+        """
         if not callable(func):
             raise TypeError("The provided object must be a callable function.")
 
@@ -220,27 +307,88 @@ class ParallelExecutor:
         return [results_map[i] for i in range(self.num_gpus)]
 
     def __enter__(self):
+        """
+        Enter the context manager.
+
+        This method is called when entering a `with` statement.
+        It returns the ParallelExecutor instance for use in the context.
+
+        Returns:
+            ParallelExecutor: The instance itself.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exit the context manager.
+
+        This method is called when exiting a `with` statement.
+        Currently, it performs no cleanup actions, but is included to support
+        the context manager protocol.
+
+        Args:
+            exc_type: The exception type, if an exception was raised in the context.
+            exc_val: The exception value, if an exception was raised in the context.
+            exc_tb: The traceback, if an exception was raised in the context.
+        """
         pass
 
 
 def parallelize_on_gpus(num_gpus: int = None, pass_device: bool = True):
     """
-    A decorator to run a function in parallel on multiple GPUs, designed to
-    work robustly in interactive environments by using cloudpickle and
-    torch.multiprocessing.
+    A decorator to run a function in parallel on multiple GPUs.
+
+    This decorator distributes the execution of a function across multiple GPUs,
+    creating a separate process for each GPU. It is designed to work robustly in
+    interactive environments (like Jupyter notebooks) by using cloudpickle for
+    serialization and torch.multiprocessing for process management.
+
+    Args:
+        num_gpus (int, optional): Number of GPUs to use. If None, uses all available GPUs.
+        pass_device (bool, optional): If True, passes the device as an argument to the function.
+            The device will be passed as a named argument 'device'. Defaults to True.
+
+    Returns:
+        callable: A wrapped function that, when called, executes the original function
+            in parallel across multiple GPUs and returns a list of results.
+
+    Example:
+        >>> @parallelize_on_gpus()
+        ... def process_on_gpu(device, data):
+        ...     # This function will be executed on each GPU
+        ...     return data.to(device) * 2
+        ...
+        >>> results = process_on_gpu(torch.tensor([1, 2, 3]))
+        >>> # results is a list of tensors, one from each GPU
 
     Note:
-        If encountering a EOFError, the torch multiprocessing kernel gets stopped prematurely and the results can't be
-        shared between the processes. Try converting the results of your function to a list or a numpy array before
-        returning.
+        If encountering an EOFError, the torch multiprocessing kernel may have been stopped
+        prematurely, preventing results from being shared between processes. Try converting
+        the results of your function to a list or a numpy array before returning.
     """
 
     def decorator(user_func: Callable) -> Callable:
+        """
+        The actual decorator function that wraps the user's function.
+
+        Args:
+            user_func (Callable): The function to be decorated.
+
+        Returns:
+            Callable: The wrapped function that will execute in parallel.
+        """
         @functools.wraps(user_func)
         def wrapper(*args: Any, **kwargs: Any) -> list:
+            """
+            The wrapper function that executes the user's function in parallel.
+
+            Args:
+                *args: Positional arguments to pass to the user's function.
+                **kwargs: Keyword arguments to pass to the user's function.
+
+            Returns:
+                list: A list of results from each GPU, in order of GPU index.
+            """
             with ParallelExecutor(num_gpus=num_gpus, pass_device=pass_device) as executor:
                 return executor.run(user_func, *args, **kwargs)
 
