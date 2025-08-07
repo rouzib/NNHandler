@@ -3258,14 +3258,99 @@ class NNHandler:
 
         return score_val
 
+    def make_pos_grid(self, x0: int, y0: int, p: int, H: int):
+        """Return a (1,2,p,p) tensor with x/y in [-1,1]."""
+        xs = torch.arange(x0, x0 + p, device=self.device)
+        ys = torch.arange(y0, y0 + p, device=self.device)
+        xg = ((xs.view(1, -1).repeat(p, 1) / (H - 1)) - 0.5) * 2
+        yg = ((ys.view(-1, 1).repeat(1, p) / (H - 1)) - 0.5) * 2
+        return torch.stack([xg, yg], 0).unsqueeze(0)  # (1,2,p,p)
+
+    def patch_score_vectorized(self, t, x, patch_size=16, stride=6):
+        """
+        Vectorized patch_score: computes score for all overlapping patches and averages overlaps.
+
+        Args:
+            t: (B,) tensor, batch of scalar times
+            x: (B,C,H,W) input images
+            model: your patch-based model, expects (t, patch, pos)
+            patch_size: (int) size of square patch
+            stride: (int) stride between patches
+
+        Returns:
+            (B, C, H, W) score image
+        """
+        B, C, H, W = x.shape
+
+        # Compute number of patches along each dimension
+        patch_H = (H - patch_size) // stride + 1
+        patch_W = (W - patch_size) // stride + 1
+        num_patches = patch_H * patch_W
+
+        # Use unfold to extract all patches
+        # x_patches: (B, C*patch_size*patch_size, num_patches)
+        x_patches = torch.nn.functional.unfold(x, kernel_size=patch_size, stride=stride)
+        # Reshape to (B * num_patches, C, patch_size, patch_size)
+        x_patches = x_patches.transpose(1, 2)
+        x_patches = x_patches.reshape(B * num_patches, C, patch_size, patch_size)
+
+        # Generate position grids for all patches
+        pos_grids = []
+        idx = 0
+        for i in range(0, H - patch_size + 1, stride):
+            for j in range(0, W - patch_size + 1, stride):
+                pos = self.make_pos_grid(j, i, patch_size, H)  # (1,2,p,p)
+                pos_grids.append(pos)
+                idx += 1
+        pos_grids = torch.cat(pos_grids, dim=0)  # (num_patches, 2, p, p)
+        pos_grids = pos_grids.unsqueeze(0).repeat(B, 1, 1, 1, 1)  # (B,num_patches,2,p,p)
+        pos_grids = pos_grids.reshape(B * num_patches, 2, patch_size, patch_size)
+
+        # Repeat t for all patches
+        t_exp = t.unsqueeze(1).expand(B, num_patches).reshape(-1)
+
+        # Model prediction
+        # shape: (B*num_patches, C, patch_size, patch_size)
+        s = self.score(t_exp, x_patches, pos_grids)
+
+        # Fold patches back into image space
+        # Prepare for fold: (B, num_patches, C*patch_size*patch_size)
+        s = s.reshape(B, num_patches, C * patch_size * patch_size).transpose(1, 2)
+        # Fold the patches into (B,C,H,W)
+        score = torch.nn.functional.fold(
+            s,
+            output_size=(H, W),
+            kernel_size=patch_size,
+            stride=stride,
+        )
+
+        # For normalization, get the overlap count for each pixel
+        ones = torch.ones((B, C, H, W), device=x.device)
+        unfold_ones = torch.nn.functional.unfold(ones, kernel_size=patch_size, stride=stride)
+        unfold_ones = unfold_ones.transpose(1, 2).reshape(B, num_patches, C * patch_size * patch_size).transpose(1, 2)
+        overlap = torch.nn.functional.fold(
+            unfold_ones,
+            output_size=(H, W),
+            kernel_size=patch_size,
+            stride=stride,
+        )
+
+        return score / overlap
+
     @torch.no_grad()
     def sample(self, shape: Tuple[int, ...], steps: int, condition: Optional[list] = None,
                likelihood_score_fn: Optional[Callable] = None, guidance_factor: float = 1.,
-               apply_ema: bool = True, bar: bool = True, stop_on_NaN=True) -> Optional[Tensor]:
+               apply_ema: bool = True, bar: bool = True, stop_on_NaN=True, patch_size=None, stride=None) -> Optional[
+        Tensor]:
         """
         Performs sampling using the reverse SDE (Euler-Maruyama).
         Intended to be run on Rank 0 primarily, returns None on other ranks.
         """
+        # Sampling is typically done on rank 0 to avoid redundant computation and gathering issues.
+        if self._distributed and self._rank != 0:
+            # Add barrier? Depends if rank 0 needs to wait. Assume not for typical sampling.
+            return None
+
         if self._model_type != self.ModelType.SCORE_BASED:
             raise NotImplementedError("Sampling is only supported for SCORE_BASED models.")
         if self._sde is None: raise RuntimeError("SDE must be set for sampling.")
@@ -3273,6 +3358,13 @@ class NNHandler:
 
         if condition is None: condition = []  # Ensure condition is a list
         self.eval(activate=True, log=False)  # Set model to evaluation mode
+
+        if (patch_size is None) != (stride is None):
+            raise ValueError("Both patch_size and stride must be specified together (either both set, or both None).")
+        elif (patch_size is not None) and (stride is not None):
+            patch_diffusion_mode = True
+        else:
+            patch_diffusion_mode = False
 
         # TQDM setup (rank 0 only)
         tqdm_module = None
@@ -3298,15 +3390,27 @@ class NNHandler:
         try:
             x = self._sde.prior(D).sample([B]).to(self._device)
         except Exception as e:
-            raise RuntimeError(f"Failed to sample from SDE prior: {e}") from e
+            raise RuntimeError(f"Rank 0 failed to sample from SDE prior: {e}") from e
 
         # Time schedule
-        t_schedule = get_t_schedule(self._sde, steps, self._device)
+        # Check if SDE class name suggests cosine schedule (avoid direct import)
+        is_vpsde = hasattr(self._sde, '__class__') and self._sde.__class__.__name__ == "VPSDE"
+        time_schedule = torch.linspace(self._sde.T, self._sde.epsilon, steps + 1, device=self._device)
+
+        if is_vpsde:  # Use cosine schedule for VPSDE based on name match
+            t_schedule = torch.tensor([
+                self._sde.epsilon + 0.5 * (self._sde.T - self._sde.epsilon) * (1 + math.cos(math.pi * i / steps))
+                for i in range(steps + 1)
+            ], device=self._device)
+            if self.__logger: self.__logger.debug("Using custom cosine time schedule (VPSDE detected).")
+        else:
+            t_schedule = time_schedule  # Linear schedule otherwise
+            if self.__logger: self.__logger.debug("Using linear time schedule.")
 
         # Prepare iterator with progress bar (rank 0 only)
         pbar_iterator = range(steps)
         if bar and tqdm_module:
-            pbar_iterator = tqdm_module(pbar_iterator, desc=f"Sampling ({sampling_from})", dynamic_ncols=True, disable=self._rank != 0)
+            pbar_iterator = tqdm_module(pbar_iterator, desc=f"Sampling ({sampling_from})", dynamic_ncols=True)
 
         # Apply EMA weights context manager if enabled
         ema_context = self._ema.average_parameters() if (self._ema and apply_ema) else contextlib.nullcontext()
@@ -3331,7 +3435,11 @@ class NNHandler:
                 f = self._sde.drift(t_batch, x)
 
                 # Calculate score s(t, x) using the handler's method
-                score_val = self.score(t_batch, x, *condition)
+                score_val = self.score(t_batch, x,
+                                       *condition) if not patch_diffusion_mode else self.patch_score_vectorized(t_batch,
+                                                                                                                x,
+                                                                                                                patch_size,
+                                                                                                                stride)
 
                 # Calculate likelihood score (user provided or zero)
                 likelihood_score_val = likelihood_score_fn(t_batch, x)
