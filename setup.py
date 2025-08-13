@@ -16,7 +16,7 @@ else:
 
 setup(
     name="NNHandler",
-    version="0.2.2",
+    version="0.2.3",
     author="Nicolas Payot",
     author_email="",
     description="A comprehensive framework for PyTorch neural network handling",
