@@ -89,10 +89,10 @@ class ModelCheckpoint(Callback):
                     self._save_model(filepath)
                 elif self.verbose > 1:
                     print(f'Epoch {self._current_epoch}: {self.monitor} did not improve from {self.best.item():.5f}')
-                if self.handler.logger:
-                    self.handler.logger.debug(
-                        f'{self.__class__.__name__}: (Epoch {self._current_epoch}) {self.monitor} did not improve from '
-                        f'{self.best.item():.5f}')
+                    if self.handler.logger:
+                        self.handler.logger.debug(
+                            f'{self.__class__.__name__}: (Epoch {self._current_epoch}) {self.monitor} did not improve from '
+                            f'{self.best.item():.5f}')
 
         else:
             if self.verbose > 0:
