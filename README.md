@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Optional: Add license -->
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/) <!-- Optional: Add Python version -->
-[![PyTorch Version](https://img.shields.io/badge/pytorch-1.10%2B-orange.svg)](https://pytorch.org/) <!-- Optional: Add PyTorch version -->
+[![PyTorch Version](https://img.shields.io/badge/pytorch-2.0%2B-orange.svg)](https://pytorch.org/) <!-- Optional: Add PyTorch version -->
 
 The `nn_handler` repository provides a comprehensive and flexible Python framework designed to streamline the development, training, evaluation, and management of PyTorch neural network models. It aims to abstract away boilerplate code, allowing researchers and developers to focus on model architecture and experimentation.
 
