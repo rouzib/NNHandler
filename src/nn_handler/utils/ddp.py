@@ -91,6 +91,7 @@ def _is_env_distributed() -> bool:
 
     # -------- 3. Nothing useful found --------------------------------------
     else:
+        print("WARN: No DDP environment variables found. Running non-DDP.")
         return False
 
     # -------- 4. Sanity checks ---------------------------------------------
