@@ -15,4 +15,4 @@ module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
 
-srun /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
+srun python /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
