@@ -29,12 +29,6 @@ NNHandler offers a unified interface supporting:
 Installation
 -----------
 
-From PyPI (recommended):
-
-.. code-block:: bash
-
-    pip install NNHandler
-
 From GitHub:
 
 .. code-block:: bash

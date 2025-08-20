@@ -18,6 +18,14 @@ NNHandler offers a unified interface supporting:
 
 ## Installation
 
+### Using `pip`
+
+```bash
+pip install --upgrade git+https://github.com/rouzib/NNHandler.git
+```
+
+### Alternative method
+
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/rouzib/NNHandler.git
