@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --time=0-00:05:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
+#SBATCH --ntasks-per-gpu=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-task=1
 #SBATCH --mem-per-cpu=4G
@@ -9,7 +9,7 @@
 #SBATCH --chdir=/home/r/rouzib/links/scratch
 #SBATCH --output=/home/r/rouzib/links/scratch/ddp_%j.out
 #SBATCH --mail-user=npayot@gmail.com
-#SBATCH --mail-type=FAIL,END,BEGIN
+#SBATCH --mail-type=BEGIN
 
 module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
