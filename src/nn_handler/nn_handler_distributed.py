@@ -33,6 +33,7 @@ from torch import Tensor
 from torch.func import vjp
 from torch.utils.data import DataLoader, Dataset, DistributedSampler, RandomSampler, \
     Sampler as TorchSampler  # Added TorchSampler alias
+import torch.nn.functional as F
 
 # --- Distributed Training Imports ---
 import torch.distributed as dist
@@ -3266,70 +3267,117 @@ class NNHandler:
         yg = ((ys.view(-1, 1).repeat(1, p) / (H - 1)) - 0.5) * 2
         return torch.stack([xg, yg], 0).unsqueeze(0)  # (1,2,p,p)
 
-    def patch_score_vectorized(self, t, x, patch_size=16, stride=6):
+    def patch_score_vectorized(self, t, x, patch_size=16, stride=6, patch_chunk=None):
         """
         Vectorized patch_score: computes score for all overlapping patches and averages overlaps.
 
         Args:
             t: (B,) tensor, batch of scalar times
             x: (B,C,H,W) input images
-            model: your patch-based model, expects (t, patch, pos)
             patch_size: (int) size of square patch
             stride: (int) stride between patches
+            patch_chunk: (int or None) number of *patches* (not images) to score per chunk.
+                         If None, computes in a single pass.
 
         Returns:
             (B, C, H, W) score image
         """
         B, C, H, W = x.shape
+        device = x.device
+        dtype = x.dtype
 
-        # Compute number of patches along each dimension
+        # Number of sliding-window positions
         patch_H = (H - patch_size) // stride + 1
         patch_W = (W - patch_size) // stride + 1
         num_patches = patch_H * patch_W
 
-        # Use unfold to extract all patches
-        # x_patches: (B, C*patch_size*patch_size, num_patches)
-        x_patches = torch.nn.functional.unfold(x, kernel_size=patch_size, stride=stride)
-        # Reshape to (B * num_patches, C, patch_size, patch_size)
-        x_patches = x_patches.transpose(1, 2)
-        x_patches = x_patches.reshape(B * num_patches, C, patch_size, patch_size)
+        # Unfold image into sliding windows (view-like layout)
+        # x_unf: (B, C*patch_size*patch_size, num_patches)
+        x_unf = F.unfold(x, kernel_size=patch_size, stride=stride)
 
-        # Generate position grids for all patches
-        pos_grids = []
-        idx = 0
-        for i in range(0, H - patch_size + 1, stride):
-            for j in range(0, W - patch_size + 1, stride):
-                pos = self.make_pos_grid(j, i, patch_size, H)  # (1,2,p,p)
-                pos_grids.append(pos)
-                idx += 1
-        pos_grids = torch.cat(pos_grids, dim=0)  # (num_patches, 2, p, p)
-        pos_grids = pos_grids.unsqueeze(0).repeat(B, 1, 1, 1, 1)  # (B,num_patches,2,p,p)
-        pos_grids = pos_grids.reshape(B * num_patches, 2, patch_size, patch_size)
+        # Helper: top-left coordinates (y, x) for each patch index [0..num_patches)
+        rows = torch.arange(0, H - patch_size + 1, stride, device=device)
+        cols = torch.arange(0, W - patch_size + 1, stride, device=device)
+        ii, jj = torch.meshgrid(rows, cols, indexing='ij')  # (patch_H, patch_W)
+        top_y = ii.reshape(-1)  # (num_patches,)
+        left_x = jj.reshape(-1)  # (num_patches,)
 
-        # Repeat t for all patches
-        t_exp = t.unsqueeze(1).expand(B, num_patches).reshape(-1)
+        if patch_chunk is None:
+            # --- Single pass ---
+            # Build all patch tensors
+            x_patches = x_unf.permute(0, 2, 1).reshape(B * num_patches, C, patch_size, patch_size)
 
-        # Model prediction
-        # shape: (B*num_patches, C, patch_size, patch_size)
-        s = self.score(t_exp, x_patches, pos_grids)
+            # Build all position grids
+            pos_list = [
+                self.make_pos_grid(int(x0), int(y0), patch_size, H)  # (1,2,p,p)
+                for y0, x0 in zip(top_y.tolist(), left_x.tolist())
+            ]
+            pos_grids = torch.cat(pos_list, dim=0)  # (num_patches, 2, p, p)
+            pos_grids = pos_grids.unsqueeze(0).repeat(B, 1, 1, 1, 1).reshape(
+                B * num_patches, 2, patch_size, patch_size
+            )
 
-        # Fold patches back into image space
-        # Prepare for fold: (B, num_patches, C*patch_size*patch_size)
-        s = s.reshape(B, num_patches, C * patch_size * patch_size).transpose(1, 2)
-        # Fold the patches into (B,C,H,W)
-        score = torch.nn.functional.fold(
-            s,
+            # Repeat t for all patches
+            t_exp = t.unsqueeze(1).expand(B, num_patches).reshape(-1)
+
+            # Model prediction: (B*num_patches, C, p, p)
+            s = self.score(t_exp, x_patches, pos_grids)
+
+            # Prepare for fold: (B, C*p*p, num_patches)
+            s_cols = s.reshape(B, num_patches, C * patch_size * patch_size).transpose(1, 2)
+
+        else:
+            # --- Chunked pass ---
+            patch_chunk = max(1, int(patch_chunk))
+
+            # We accumulate per-patch columns and do a single fold at the end.
+            s_cols = torch.empty(
+                B, C * patch_size * patch_size, num_patches, device=device, dtype=dtype
+            )
+
+            # Pre-expand time in a streaming-friendly way
+            # (we materialize only per chunk below)
+            for start in range(0, num_patches, patch_chunk):
+                end = min(start + patch_chunk, num_patches)
+                npi = end - start  # number of patches in this chunk
+
+                # Take the corresponding patch columns (view), then reshape to (B*npi, C, p, p)
+                x_chunk = x_unf[:, :, start:end].permute(0, 2, 1).reshape(
+                    B * npi, C, patch_size, patch_size
+                )
+
+                # Build only the needed position grids for this chunk
+                pos_list = [
+                    self.make_pos_grid(int(x0), int(y0), patch_size, H)
+                    for y0, x0 in zip(top_y[start:end].tolist(), left_x[start:end].tolist())
+                ]
+                pos_chunk = torch.cat(pos_list, dim=0)  # (npi, 2, p, p)
+                pos_chunk = pos_chunk.unsqueeze(0).repeat(B, 1, 1, 1, 1).reshape(
+                    B * npi, 2, patch_size, patch_size
+                )
+
+                # Time for this chunk
+                t_chunk = t.unsqueeze(1).expand(B, npi).reshape(-1)
+
+                # Score this chunk
+                s_chunk = self.score(t_chunk, x_chunk, pos_chunk)  # (B*npi, C, p, p)
+
+                # Write into the correct columns so we can fold once at the end
+                s_chunk_cols = s_chunk.reshape(B, npi, C * patch_size * patch_size).transpose(1, 2).contiguous()
+                s_cols[:, :, start:end] = s_chunk_cols
+
+        # Fold all patches back to image space (linear; equivalent to summing overlaps)
+        score = F.fold(
+            s_cols,
             output_size=(H, W),
             kernel_size=patch_size,
             stride=stride,
         )
 
-        # For normalization, get the overlap count for each pixel
-        ones = torch.ones((B, C, H, W), device=x.device)
-        unfold_ones = torch.nn.functional.unfold(ones, kernel_size=patch_size, stride=stride)
-        unfold_ones = unfold_ones.transpose(1, 2).reshape(B, num_patches, C * patch_size * patch_size).transpose(1, 2)
-        overlap = torch.nn.functional.fold(
-            unfold_ones,
+        # Overlap normalization (how many times each pixel was covered)
+        ones = torch.ones((B, C, H, W), device=device, dtype=dtype)
+        overlap = F.fold(
+            F.unfold(ones, kernel_size=patch_size, stride=stride),
             output_size=(H, W),
             kernel_size=patch_size,
             stride=stride,
@@ -3340,7 +3388,8 @@ class NNHandler:
     @torch.no_grad()
     def sample(self, shape: Tuple[int, ...], steps: int, condition: Optional[list] = None,
                likelihood_score_fn: Optional[Callable] = None, guidance_factor: float = 1.,
-               apply_ema: bool = True, bar: bool = True, stop_on_NaN=True, patch_size=None, stride=None) -> Optional[
+               apply_ema: bool = True, bar: bool = True, stop_on_NaN=True, patch_size=None, stride=None,
+               patch_chunk=None) -> Optional[
         Tensor]:
         """
         Performs sampling using the reverse SDE (Euler-Maruyama).
@@ -3435,11 +3484,10 @@ class NNHandler:
                 f = self._sde.drift(t_batch, x)
 
                 # Calculate score s(t, x) using the handler's method
-                score_val = self.score(t_batch, x,
-                                       *condition) if not patch_diffusion_mode else self.patch_score_vectorized(t_batch,
-                                                                                                                x,
-                                                                                                                patch_size,
-                                                                                                                stride)
+                if patch_diffusion_mode:
+                    score_val = self.patch_score_vectorized(t_batch, x, patch_size, stride, patch_chunk)
+                else:
+                    score_val = self.score(t_batch, x, *condition)
 
                 # Calculate likelihood score (user provided or zero)
                 likelihood_score_val = likelihood_score_fn(t_batch, x)
