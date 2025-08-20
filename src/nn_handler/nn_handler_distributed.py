@@ -46,6 +46,8 @@ from .sampler import Sampler
 from .score_models import get_t_schedule
 from .utils import _resolve_device, _initialize_distributed, _should_use_distributed
 
+__version__ = "0.2.6_ddp"
+
 # --- Conditional Imports ---
 try:
     from torch.amp import GradScaler, autocast
@@ -222,6 +224,11 @@ class NNHandler:
         TypeError: For invalid argument types.
         ValueError: For invalid argument values.
     """
+
+    @property
+    def version(self):
+        """Returns the version of the package."""
+        return __version__
 
     class ModelType(Enum):
         CLASSIFICATION = "classification"
@@ -2159,7 +2166,7 @@ class NNHandler:
                 "callback_states": {cb.__class__.__name__: cb.state_dict() for cb in self._callbacks},
 
                 # Versioning / Metadata
-                "nn_handler_version": "0.2.5_ddp",  # Mark version for DDP compatibility
+                "nn_handler_version": __version__,  # Mark version for DDP compatibility
                 "pytorch_version": torch.__version__,
             }
 
