@@ -138,6 +138,8 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     _local_rank = int(os.environ['LOCAL_RANK'])
     _world_size = int(os.environ['WORLD_SIZE'])
 
+    print(f"{_rank = }, {_local_rank = }, {_world_size =}")
+
     # --------------------------------- device selection --------------------
     if torch.cuda.is_available():
         if torch.cuda.device_count() == 1:
