@@ -43,12 +43,6 @@ For development:
     cd NNHandler
     pip install -e .
 
-For full functionality:
-
-.. code-block:: bash
-
-    pip install NNHandler[full]
-
 Documentation
 ------------
 
