@@ -13,7 +13,7 @@ print(os.environ["CUDA_VISIBLE_DEVICES"])
 
 print(os.environ['SLURM_PROCID'])
 print(os.environ['SLURM_LOCALID'])
-os.environ['SLURM_NTASKS'] = "1"
+print(os.environ['SLURM_NTASKS'])
 
 print(f"{torch.cuda.device_count()} GPUs available. {torch.cuda.is_available()=}")
 print(f"{_is_env_distributed()=}")
