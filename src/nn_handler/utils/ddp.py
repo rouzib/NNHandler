@@ -102,6 +102,34 @@ def _is_env_distributed() -> bool:
 
     return world_size > 1  # DDP only makes sense if >1 process
 
+def _first_host_from_slurm_nodelist(nodelist: str) -> str:
+    """
+    Return the first hostname from SLURM_NODELIST.
+    Handles forms like:
+      - 'gra123'
+      - 'gra[123-126]'
+      - 'nodeA[01,03,07]'
+      - 'nodeA[001-003,007]'
+    """
+    # Plain single host (no brackets)
+    if "[" not in nodelist:
+        return nodelist
+
+    m = re.match(r"^([^\[]+)\[(.+)\]$", nodelist)
+    if not m:
+        # Fallback: be permissive
+        return nodelist
+
+    prefix, body = m.groups()  # e.g., prefix='gra', body='123-126,130'
+    # Split comma groups and take the first group
+    first_group = body.split(",")[0].strip()
+    if "-" in first_group:
+        start, _ = first_group.split("-", 1)
+        first_num = start
+    else:
+        first_num = first_group
+
+    return f"{prefix}{first_num}"
 
 def _initialize_distributed(timeout: Optional[timedelta] = None):
     """
@@ -157,29 +185,30 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
         backend = "gloo"
 
     # -------------- Ensure MASTER_ADDR / MASTER_PORT exist -----------------
-    # Slurm jobs often export MASTER_ADDR automatically when using `srun`.
     os.environ.setdefault("MASTER_PORT", "29500")
+
     if "MASTER_ADDR" not in os.environ:
-        # Fallback: use the first hostname in the node list, if present.
-        nodelist = os.environ.get("SLURM_NODELIST")
+        # Prefer Slurm-provided hints
+        slurm_host = None
+        nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
         if nodelist:
-            # e.g. "node[001-004]" -> "node001"
-            import re
-            match = re.match(r"^([^\[]+)\[(\d+)", nodelist)
-            if match:
-                prefix = match.group(1)
-                first_number = match.group(2)
-                first_node = prefix + first_number
-                os.environ["MASTER_ADDR"] = first_node
-            else:
-                message = ("No host name in the node list. Please set the host name of the node to be used as a "
-                           "host, i.e., in MASTER_ADDR environment variable.")
-                print(f"ERROR (Rank {_rank}): {message}")
-                raise ValueError(message)
+            slurm_host = _first_host_from_slurm_nodelist(nodelist)
         else:
-            # As a last resort, use the current host name.
+            # Single-node steps sometimes expose this
+            slurm_host = os.environ.get("SLURMD_NODENAME")
+
+        if slurm_host:
+            os.environ["MASTER_ADDR"] = slurm_host
+        else:
             import socket
+            # Last resort: current host is fine for 1-node jobs
             os.environ["MASTER_ADDR"] = socket.gethostname()
+
+        print(f"{os.environ['MASTER_ADDR'] =}")
+        print(f"{os.environ['MASTER_PORT'] =}")
+        print(f"{os.environ['SLURM_JOB_NODELIST'] =}")
+        print(f"{os.environ['SLURM_NODELIST'] =}")
+        print(f"{os.environ['SLURMD_NODENAME'] =}")
 
     # ---------------------------- init -------------------------------------
     print(f"INFO (Rank {_rank}): Initializing process group | "
