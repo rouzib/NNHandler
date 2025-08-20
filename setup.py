@@ -16,7 +16,7 @@ else:
 
 setup(
     name="NNHandler",
-    version="0.2.4",
+    version="0.2.5",
     author="Nicolas Payot",
     author_email="",
     description="A comprehensive framework for PyTorch neural network handling",
@@ -36,12 +36,10 @@ setup(
     python_requires=">=3.10",
     install_requires=[
         "torch>=2.0",
+        "cloudpickle>=3.0.0",
+        "numpy",
+        "matplotlib",
+        "tqdm",
+        "torch_ema>=0.3"
     ],
-    extras_require={
-        "full": [
-            "torch_ema",
-            "matplotlib",
-            "tqdm",
-        ],
-    },
 )

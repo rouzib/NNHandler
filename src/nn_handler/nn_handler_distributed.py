@@ -2159,7 +2159,7 @@ class NNHandler:
                 "callback_states": {cb.__class__.__name__: cb.state_dict() for cb in self._callbacks},
 
                 # Versioning / Metadata
-                "nn_handler_version": "0.2.4_ddp",  # Mark version for DDP compatibility
+                "nn_handler_version": "0.2.5_ddp",  # Mark version for DDP compatibility
                 "pytorch_version": torch.__version__,
             }
 
