@@ -4,3 +4,5 @@ notebooks/MNIST
 notebooks/models
 
 doc/save_doc.py
+/src/NNHandler.egg-info/
+/build/
