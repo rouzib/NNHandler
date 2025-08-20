@@ -1,10 +1,11 @@
 #!/bin/bash
 #SBATCH --time=0-00:05:00
 #SBATCH --nodes=1
-#SBATCH --ntasks=4
+#SBATCH --ntasks-per-gpu=1
 #SBATCH --gpus-per-node=4
-#SBATCH --cpus-per-gpu=1
+#SBATCH --cpus-per-task=1
 #SBATCH --mem-per-cpu=4G
+#SBATCH --tres-bind=gres/gpu:verbose,single:1
 #SBATCH --account=aip-lplevass
 #SBATCH --chdir=/home/r/rouzib/links/scratch
 #SBATCH --output=/home/r/rouzib/links/scratch/ddp_%j.out
