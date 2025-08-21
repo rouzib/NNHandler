@@ -59,7 +59,7 @@ The framework revolves around the central `NNHandler` class and its supporting m
 *   [NNHandler Module](doc/nn_handler/README.md): Overview of the core module.
     *   [NNHandler Class](doc/nn_handler/nn_handler.md): Detailed API reference for `NNHandler`.
     *   [Distributed Training (DDP)](doc/nn_handler/distributed.md): Guide to using DDP features.
-        *   [SLURM Job Templates](doc/nn_handler/distributed.md#slurm-job-script-templates): Templates for running distributed training on HPC clusters ([single_node](doc/single_node_slurm_job.sh), [multi-node/single-GPU](doc/multiple_nodes_single_gpu_slurm_job.sh), [multi-node/multi-GPU](doc/multiple_nodes_multiple_gpu_slurm_job.sh)).
+        *   [SLURM Job Templates](doc/nn_handler/distributed.md#slurm-job-script-templates): Templates for running distributed training on HPC clusters ([single_node](doc/single_node_multiple_gpu_slurm_job.sh), [multi-node/single-GPU](doc/multiple_nodes_single_gpu_slurm_job.sh), [multi-node/multi-GPU](doc/multiple_nodes_multiple_gpu_slurm_job.sh)).
     *   [AutoSaver Feature](doc/nn_handler/autosaver.md): Auto-saving configuration.
     *   [Sampler Integration](doc/nn_handler/sampler.md): Using custom samplers.
     *   [Callbacks System](doc/nn_handler/callbacks/README.md): Introduction to callbacks and available implementations.
@@ -127,10 +127,10 @@ handler.save("models/final_handler_state.pth")
 
 For high-performance computing (HPC) clusters using SLURM, NNHandler provides ready-to-use job templates:
 
-1. **Single Node, Multiple GPUs** ([single_node_slurm_job.sh](doc/single_node_slurm_job.sh)):
+1. **Single Node, Multiple GPUs** ([single_node_multiple_gpu_slurm_job.sh](doc/single_node_multiple_gpu_slurm_job.sh)):
    ```bash
    # Copy the template and modify as needed
-   cp doc/single_node_slurm_job.sh ./my_training_job.sh
+   cp doc/single_node_multiple_gpu_slurm_job.sh ./my_training_job.sh
    # Edit the script to update account, time, and Python file
    sbatch my_training_job.sh
    ```

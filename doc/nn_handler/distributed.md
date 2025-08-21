@@ -53,7 +53,7 @@ srun /home/User/ENV/bin/python training.py
 
 NNHandler provides several SLURM job script templates in the `doc` directory to help you run distributed training on HPC clusters:
 
-1. **Single Node, Multiple GPUs** ([single_node_slurm_job.sh](../single_node_slurm_job.sh)):
+1. **Single Node, Multiple GPUs** ([single_node_multiple_gpu_slurm_job.sh](../single_node_multiple_gpu_slurm_job.sh)):
    - For training on a single node with multiple GPUs
    - Uses `torchrun` to launch the distributed training
    - Example: 1 node with 4 GPUs
