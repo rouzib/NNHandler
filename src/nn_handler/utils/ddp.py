@@ -56,6 +56,7 @@ def _maybe_spawn_local_workers():
         # training code ...
     """
     # Don't recurse; children mark themselves as spawned.
+    print(f"{os.environ.get('NH_SPAWNED')=}")
     if os.environ.get("NH_SPAWNED") == "1":
         return
     # If a rank is already set (e.g., torchrun), do nothing.
@@ -75,6 +76,8 @@ def _maybe_spawn_local_workers():
     nproc_per_node = int(os.environ.get("NH_NPROC_PER_NODE", str(nvis)))
     world_size = nnodes * nproc_per_node
 
+    print(f"{nnodes = }, {node_rank = }, {nproc_per_node = }, {world_size = }")
+
     _ensure_master_env()
 
     # Prepare base environment for children
@@ -83,8 +86,8 @@ def _maybe_spawn_local_workers():
     base_env["WORLD_SIZE"] = str(world_size)
     base_env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")  # stable GPU ordering
     # Modern PyTorch NCCL controls (optional but helpful)
-    base_env.setdefault("TORCH_NCCL_BLOCKING_WAIT", "1")
-    base_env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
+    # base_env.setdefault("TORCH_NCCL_BLOCKING_WAIT", "1")
+    # base_env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
 
     procs = []
     for local_rank in range(nproc_per_node):
@@ -93,6 +96,8 @@ def _maybe_spawn_local_workers():
         child_env["RANK"] = str(node_rank * nproc_per_node + local_rank)
         cmd = [sys.executable] + sys.argv
         procs.append(subprocess.Popen(cmd, env=child_env))
+
+        print(f"{child_env = }, {cmd = }")
 
     # Parent waits for all children and then exits with aggregated return code.
     rc = 0
@@ -189,6 +194,8 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     """
     # NEW: if we're the parent (task-per-node), spawn children and exit.
     _maybe_spawn_local_workers()
+
+    return
 
     if not dist.is_available():
         print("ERROR: torch.distributed is not available. Disabling DDP.")
