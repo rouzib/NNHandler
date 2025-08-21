@@ -46,7 +46,7 @@ from .sampler import Sampler
 from .score_models import get_t_schedule
 from .utils import _resolve_device, _initialize_distributed, _should_use_distributed
 
-__version__ = "0.2.7_ddp"
+__version__ = "0.2.8_ddp"
 
 # --- Conditional Imports ---
 try:
@@ -2254,7 +2254,7 @@ class NNHandler:
         # weights_only=False is required to load optimizer, scheduler, etc.
         # If all skips are True, we could use weights_only=True, but safer to keep False.
         try:
-            state = torch.load(path, map_location=map_location)  # Load onto the target device map
+            state = torch.load(path, map_location=map_location, weights_only=False)  # Load onto the target device map
         except Exception as e:
             # Add rank info to error
             raise RuntimeError(
