@@ -1,5 +1,8 @@
 import os
 import re
+import sys
+import socket
+import subprocess
 import warnings
 from datetime import timedelta
 from typing import Union, Optional
@@ -8,24 +11,130 @@ import torch
 import torch.distributed as dist
 
 
+# ---------------------------- Helpers for Slurm/env ----------------------------
+
+def _first_host_from_slurm_nodelist(nodelist: str) -> str:
+    """
+    Return the first hostname from SLURM_NODELIST.
+      Examples:
+        'gra123' -> 'gra123'
+        'gra[123-126]' -> 'gra123'
+        'nodeA[01,03,07]' -> 'nodeA01'
+        'nodeA[001-003,007]' -> 'nodeA001'
+    """
+    if "[" not in nodelist:
+        return nodelist
+    m = re.match(r"^([^\[]+)\[(.+)\]$", nodelist)
+    if not m:
+        return nodelist
+    prefix, body = m.groups()
+    first_group = body.split(",")[0].strip()
+    start = first_group.split("-", 1)[0]
+    return f"{prefix}{start}"
+
+
+def _ensure_master_env():
+    """Ensure MASTER_ADDR/MASTER_PORT exist (works for 1+ nodes)."""
+    os.environ.setdefault("MASTER_PORT", "29500")
+    if "MASTER_ADDR" not in os.environ:
+        nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
+        if nodelist:
+            os.environ["MASTER_ADDR"] = _first_host_from_slurm_nodelist(nodelist)
+        else:
+            os.environ["MASTER_ADDR"] = os.environ.get("SLURMD_NODENAME", socket.gethostname())
+
+
+def _maybe_spawn_local_workers():
+    """
+    If we're running one Slurm task per node (all GPUs visible in this process),
+    spawn one child process per GPU with RANK/LOCAL_RANK/WORLD_SIZE set, then exit parent.
+
+    Children re-run the same script and will *skip* spawning (NH_SPAWNED=1),
+    then run the normal code path:
+        print(f"{_is_env_distributed()=}")
+        _initialize_distributed()
+        # training code ...
+    """
+    # Don't recurse; children mark themselves as spawned.
+    if os.environ.get("NH_SPAWNED") == "1":
+        return
+    # If a rank is already set (e.g., torchrun), do nothing.
+    if all(k in os.environ for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE")):
+        return
+
+    # Only worth spawning if multiple GPUs are visible in this process
+    if not torch.cuda.is_available():
+        return
+    nvis = torch.cuda.device_count()
+    if nvis <= 1:
+        return
+
+    # Derive world size from Slurm (task-per-node) + nproc_per_node = num visible GPUs
+    nnodes = int(os.environ.get("SLURM_NNODES", "1"))
+    node_rank = int(os.environ.get("SLURM_NODEID", "0"))
+    nproc_per_node = int(os.environ.get("NH_NPROC_PER_NODE", str(nvis)))
+    world_size = nnodes * nproc_per_node
+
+    _ensure_master_env()
+
+    # Prepare base environment for children
+    base_env = os.environ.copy()
+    base_env["NH_SPAWNED"] = "1"
+    base_env["WORLD_SIZE"] = str(world_size)
+    base_env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")  # stable GPU ordering
+    # Modern PyTorch NCCL controls (optional but helpful)
+    base_env.setdefault("TORCH_NCCL_BLOCKING_WAIT", "1")
+    base_env.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
+
+    procs = []
+    for local_rank in range(nproc_per_node):
+        child_env = base_env.copy()
+        child_env["LOCAL_RANK"] = str(local_rank)
+        child_env["RANK"] = str(node_rank * nproc_per_node + local_rank)
+        cmd = [sys.executable] + sys.argv
+        procs.append(subprocess.Popen(cmd, env=child_env))
+
+    # Parent waits for all children and then exits with aggregated return code.
+    rc = 0
+    for p in procs:
+        p.wait()
+        rc = rc or p.returncode
+    sys.exit(rc)
+
+
+# ---------------------------- Public-facing toggles ----------------------------
+
+def _is_env_distributed() -> bool:
+    """
+    Return True iff standard DDP env vars exist and are sane:
+      RANK, LOCAL_RANK, WORLD_SIZE with WORLD_SIZE > 1 and 0 <= RANK < WORLD_SIZE.
+
+    NOTE: We intentionally DO NOT synthesize these from Slurm here.
+          The parent process (one task per node) will spawn per-GPU children
+          and set these variables explicitly.
+    """
+    if not all(v in os.environ for v in ('RANK', 'LOCAL_RANK', 'WORLD_SIZE')):
+        return False
+    try:
+        rank = int(os.environ['RANK'])
+        local_rank = int(os.environ['LOCAL_RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+    except ValueError:
+        print("WARN: RANK / LOCAL_RANK / WORLD_SIZE are not integers.")
+        return False
+
+    if rank < 0 or local_rank < 0 or world_size <= 0 or rank >= world_size:
+        print(f"WARN: Invalid DDP values: rank={rank}, local_rank={local_rank}, world_size={world_size}")
+        return False
+    return world_size > 1
+
+
 def _should_use_distributed(use_distributed_flag: Optional[bool]) -> bool:
     """
-    Determines if Distributed Data Parallel (DDP) should be used based on flag and environment.
-
-    This function checks if DDP should be enabled based on the provided flag and the current
-    environment. It handles three cases:
-    1. If use_distributed_flag is False: DDP is disabled
-    2. If use_distributed_flag is True: DDP is enabled if available and environment is valid
-    3. If use_distributed_flag is None (auto-detect): DDP is enabled if available and environment is valid
-
-    Args:
-        use_distributed_flag (Optional[bool]): Flag to control DDP usage.
-            - True: Explicitly enable DDP (if possible)
-            - False: Explicitly disable DDP
-            - None: Auto-detect based on environment
-
-    Returns:
-        bool: True if DDP should be used, False otherwise.
+    Should we run with DDP?
+    - False     -> never
+    - True      -> only if torch.distributed is available AND env looks valid
+    - None/auto -> enable if torch.distributed is available AND env looks valid
     """
     env_is_distributed = _is_env_distributed()
 
@@ -39,143 +148,48 @@ def _should_use_distributed(use_distributed_flag: Optional[bool]) -> bool:
             print("WARNING: DDP explicitly requested but torch.distributed is not available. Running non-DDP.")
             return False
         if not env_is_distributed:
-            print(
-                "WARNING: DDP explicitly requested but environment variables ('RANK', 'LOCAL_RANK', 'WORLD_SIZE') not set or WORLD_SIZE <= 1. Running non-DDP.")
+            print("WARNING: DDP explicitly requested but DDP env (RANK/LOCAL_RANK/WORLD_SIZE) is not set or WORLD_SIZE <= 1. Running non-DDP.")
             return False
-        # Explicitly requested and environment is valid
         print("INFO: DDP explicitly enabled and environment seems valid.")
         return True
 
-    # If use_distributed is None (auto-detect)
+    # Auto
     if dist.is_available() and env_is_distributed:
         print("INFO: DDP environment detected automatically. Enabling DDP.")
         return True
     else:
         if use_distributed_flag is None and not env_is_distributed:
             print("INFO: No DDP environment detected and use_distributed=None. Running non-DDP.")
-        # Fallback to non-distributed
         return False
 
 
-def _is_env_distributed() -> bool:
-    """
-    Checks whether the current process has the information it needs to start
-    DistributedDataParallel, coming either from torchrun-style variables
-    (RANK, LOCAL_RANK, WORLD_SIZE) *or* from Slurm.
-    """
-    # -------- 1. Standard torchrun / torch.distributed.launch --------------
-    if all(v in os.environ for v in ('RANK', 'LOCAL_RANK', 'WORLD_SIZE')):
-        try:
-            rank, local_rank, world_size = (
-                int(os.environ['RANK']),
-                int(os.environ['LOCAL_RANK']),
-                int(os.environ['WORLD_SIZE']),
-            )
-        except ValueError:
-            print("WARN: RANK / LOCAL_RANK / WORLD_SIZE are not integers.")
-            return False
-
-    # -------- 2. Slurm fallback --------------------------------------------
-    elif all(v in os.environ for v in ('SLURM_PROCID', 'SLURM_LOCALID', 'SLURM_NTASKS')):
-        try:
-            rank = int(os.environ['SLURM_PROCID'])
-            local_rank = int(os.environ['SLURM_LOCALID'])
-            world_size = int(os.environ['SLURM_NTASKS']) * torch.cuda.device_count()
-        except ValueError:
-            print("WARN: Slurm env vars could not be parsed as integers.")
-            return False
-
-        # Mirror into the regular names so the rest of the pipeline is agnostic
-        os.environ.setdefault('RANK', str(rank))
-        os.environ.setdefault('LOCAL_RANK', str(local_rank))
-        os.environ.setdefault('WORLD_SIZE', str(world_size))
-
-    # -------- 3. Nothing useful found --------------------------------------
-    else:
-        print("WARN: No DDP environment variables found. Running non-DDP.")
-        return False
-
-    # -------- 4. Sanity checks ---------------------------------------------
-    if rank < 0 or local_rank < 0 or world_size <= 0 or rank >= world_size:
-        print(f"WARN: Invalid DDP values: rank={rank}, local_rank={local_rank}, "
-              f"world_size={world_size}")
-        return False
-
-    return world_size > 1  # DDP only makes sense if >1 process
-
-
-def _first_host_from_slurm_nodelist(nodelist: str) -> str:
-    """
-    Return the first hostname from SLURM_NODELIST.
-    Handles forms like:
-      - 'gra123'
-      - 'gra[123-126]'
-      - 'nodeA[01,03,07]'
-      - 'nodeA[001-003,007]'
-    """
-    # Plain single host (no brackets)
-    if "[" not in nodelist:
-        return nodelist
-
-    m = re.match(r"^([^\[]+)\[(.+)\]$", nodelist)
-    if not m:
-        # Fallback: be permissive
-        return nodelist
-
-    prefix, body = m.groups()  # e.g., prefix='gra', body='123-126,130'
-    # Split comma groups and take the first group
-    first_group = body.split(",")[0].strip()
-    if "-" in first_group:
-        start, _ = first_group.split("-", 1)
-        first_num = start
-    else:
-        first_num = first_group
-
-    return f"{prefix}{first_num}"
-
+# ---------------------------- Device selection & init ----------------------------
 
 def _pick_device(local_rank: int) -> torch.device:
+    """
+    Map LOCAL_RANK -> cuda:{LOCAL_RANK} when multiple GPUs are visible;
+    if only one GPU is visible, use cuda:0; else fall back to CPU.
+    """
     if not torch.cuda.is_available():
         return torch.device("cpu")
-
     nvis = torch.cuda.device_count()
-    # If Slurm masked us to a single GPU, use index 0 (the masked device)
-    if nvis == 1:
-        dev = torch.device("cuda:0")
-        torch.cuda.set_device(0)
-    else:
-        # Multiple visible devices in this process → map by local_rank (safe-guard with modulo)
-        dev = torch.device(f"cuda:{local_rank % nvis}")
-        torch.cuda.set_device(local_rank % nvis)
-
+    dev = torch.device(f"cuda:{local_rank % nvis}" if nvis > 1 else "cuda:0")
     torch.cuda.set_device(dev)
     return dev
 
 
 def _initialize_distributed(timeout: Optional[timedelta] = None):
     """
-    Initialize the distributed process group for PyTorch Distributed Data Parallel (DDP).
-
-    This function reads rank, local_rank, and world_size from the environment variables
-    (set by either torchrun, torch.distributed.launch, or Slurm) and initializes the
-    distributed process group. It handles device selection based on the local_rank
-    and available CUDA devices, and ensures that MASTER_ADDR and MASTER_PORT are set.
-
-    Args:
-        timeout (Optional[timedelta]): Timeout for operations. If None, defaults to 60 minutes.
-            This is particularly important for large jobs that may take time to start up.
+    Initialize the PyTorch DDP process group. If we're in a single Slurm task
+    with multiple visible GPUs, this will auto-spawn one child per GPU and exit
+    the parent. Children then run the normal training code.
 
     Returns:
-        tuple: A 5-tuple containing:
-            - _distributed (bool): Whether distributed mode is enabled
-            - _rank (int): Global rank of this process
-            - _local_rank (int): Local rank of this process (for device selection)
-            - _world_size (int): Total number of processes
-            - _device (torch.device): The device to use for this process
-
-    Raises:
-        ValueError: If the MASTER_ADDR cannot be determined from the environment.
+        tuple(distributed: bool, rank: int, local_rank: int, world_size: int, device: torch.device)
     """
+    # NEW: if we're the parent (task-per-node), spawn children and exit.
+    _maybe_spawn_local_workers()
+
     if not dist.is_available():
         print("ERROR: torch.distributed is not available. Disabling DDP.")
         _distributed = False
@@ -183,85 +197,55 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     else:
         _distributed = True
 
-    # --- Consume the environment ---
+    # Expect RANK/LOCAL_RANK/WORLD_SIZE to be set now (by torchrun or our spawner)
     _rank = int(os.environ['RANK'])
     _local_rank = int(os.environ['LOCAL_RANK'])
     _world_size = int(os.environ['WORLD_SIZE'])
 
-    print(f"{_rank = }, {_local_rank = }, {_world_size =}")
+    print(f"{_rank = }, {_local_rank = }, {_world_size = }")
 
-    # --------------------------------- device selection --------------------
+    # Device & backend
     _device = _pick_device(_local_rank)
     backend = "nccl" if _device.type == "cuda" else "gloo"
 
-    # -------------- Ensure MASTER_ADDR / MASTER_PORT exist -----------------
-    os.environ.setdefault("MASTER_PORT", "29500")
-
-    if "MASTER_ADDR" not in os.environ:
-        # Prefer Slurm-provided hints
-        slurm_host = None
-        nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
-        if nodelist:
-            slurm_host = _first_host_from_slurm_nodelist(nodelist)
-        else:
-            # Single-node steps sometimes expose this
-            slurm_host = os.environ.get("SLURMD_NODENAME")
-
-        if slurm_host:
-            os.environ["MASTER_ADDR"] = slurm_host
-        else:
-            import socket
-            # Last resort: current host is fine for 1-node jobs
-            os.environ["MASTER_ADDR"] = socket.gethostname()
+    # Rendezvous
+    _ensure_master_env()
 
     print(f"INFO (Rank {_rank}): Initializing process group | "
           f"backend={backend}, world_size={_world_size}, "
           f"local_rank={_local_rank}, device={_device}")
 
-    # ---------------------------- init -------------------------------------
+    # Generous timeout helps slow start-ups on large jobs
     pg_kwargs = dict(
         backend=backend,
         rank=_rank,
         world_size=_world_size,
+        init_method="env://",
         timeout=timedelta(minutes=60) if timeout is None else timeout,
     )
+
+    # PyTorch ≥ 2.4: pass device_id for NCCL to silence mapping warnings
+    try:
+        dist.init_process_group(device_id=_device, **pg_kwargs)
+    except TypeError:
+        dist.init_process_group(**pg_kwargs)
+
+    # Barrier (device_ids supported on newer PyTorch)
     if backend == "nccl":
-        pg_kwargs["device_id"] = _device
+        try:
+            dist.barrier(device_ids=[_device.index])
+        except TypeError:
+            dist.barrier()
+    else:
+        dist.barrier()
 
-    dist.init_process_group(**pg_kwargs)
-
-    dist.barrier()  # safety sync
     print(f"INFO (Rank {_rank}): DDP initialised and barrier passed.")
-
     return _distributed, _rank, _local_rank, _world_size, _device
 
 
 def initialize_ddp(timeout: Optional[timedelta] = None):
     """
-    Initialize the Distributed Data Parallel (DDP) process group if not already done.
-
-    This function serves as a public entry point for initializing DDP. It checks if
-    the process group is already initialized, and if not, attempts to initialize it
-    with the appropriate settings. It's designed to be called directly without needing
-    an instance of any class.
-
-    Args:
-        timeout (Optional[timedelta]): Timeout for operations. If None, defaults to 60 minutes.
-            This is particularly important for large jobs that may take time to start up.
-
-    Returns:
-        Union[tuple, None]: 
-            - If DDP was not initialized before: Returns a 5-tuple containing:
-                - distributed (bool): Whether distributed mode is enabled
-                - rank (int): Global rank of this process
-                - local_rank (int): Local rank of this process (for device selection)
-                - world_size (int): Total number of processes
-                - device (torch.device): The device to use for this process
-            - If DDP was already initialized: Returns None
-
-    Note:
-        This function always attempts to use DDP (by passing True to _should_use_distributed)
-        unless the process group is already initialized.
+    Optional public entry point that avoids re-initialising if already initialized.
     """
     if not dist.is_initialized():
         if _should_use_distributed(True):
@@ -273,32 +257,13 @@ def initialize_ddp(timeout: Optional[timedelta] = None):
         return None
 
 
+# ---------------------------- Misc device resolver ----------------------------
+
 def _resolve_device(device: Union[torch.device, str]) -> torch.device:
     """
-    Resolve a device specification to a torch.device object, handling CUDA availability.
-
-    This function takes a device specification (either a string like 'cuda', 'cuda:0', 'cpu',
-    or a torch.device object) and resolves it to a valid torch.device object. It handles
-    cases where CUDA is requested but not available by falling back to CPU.
-
-    Args:
-        device (Union[torch.device, str]): The device specification to resolve.
-            - If a torch.device: Validates it and returns it (or falls back to CPU if needed)
-            - If a string: Converts it to a torch.device (with special handling for 'cuda' and 'gpu')
-
-    Returns:
-        torch.device: The resolved device object.
-
-    Raises:
-        TypeError: If the device is neither a string nor a torch.device.
-        ValueError: If the device string is invalid.
-
-    Note:
-        If CUDA is requested but not available, this function will issue a warning
-        and fall back to CPU instead of raising an error.
+    Resolve a device spec to torch.device with CUDA fallback to CPU if unavailable.
     """
     if isinstance(device, torch.device):
-        # If CUDA specified but not available, warn and use CPU
         if device.type == 'cuda' and not torch.cuda.is_available():
             warnings.warn(f"Requested CUDA device {device} but CUDA is not available. Using CPU instead.",
                           RuntimeWarning)
@@ -306,26 +271,22 @@ def _resolve_device(device: Union[torch.device, str]) -> torch.device:
         return device
     elif isinstance(device, str):
         dev_str = device.lower()
-        if dev_str == "cuda" or dev_str == "gpu":
+        if dev_str in ("cuda", "gpu"):
             if not torch.cuda.is_available():
                 warnings.warn("Requested CUDA device but CUDA is not available. Using CPU instead.", RuntimeWarning)
                 return torch.device("cpu")
-            # If CUDA is available, return torch.device("cuda")
-            # The specific GPU index will be handled by DDP or DataParallel later if needed
             return torch.device("cuda")
         elif dev_str.startswith("cuda:"):
             if not torch.cuda.is_available():
                 warnings.warn(f"Requested CUDA device {dev_str} but CUDA is not available. Using CPU instead.",
                               RuntimeWarning)
                 return torch.device("cpu")
-            # Check if the specific index is valid? - Let PyTorch handle this error usually
             return torch.device(dev_str)
         elif dev_str == "cpu":
             return torch.device("cpu")
         else:
             try:
-                # Allow other device types like 'mps' if supported
-                return torch.device(dev_str)
+                return torch.device(dev_str)  # e.g., 'mps'
             except RuntimeError as e:
                 raise ValueError(f"Invalid device string '{device}': {e}") from e
     else:

@@ -17,4 +17,7 @@ print(f"{os.environ['SLURM_NTASKS'] = }")
 
 print(f"{torch.cuda.device_count()} GPUs available. {torch.cuda.is_available()=}")
 print(f"{_is_env_distributed()=}")
-# _initialize_distributed()
+_initialize_distributed()
+
+print(f"{torch.cuda.device_count()} GPUs visible. {torch.cuda.is_available()=}")
+print(f"Finished")
