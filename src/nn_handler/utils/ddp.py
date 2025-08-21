@@ -145,6 +145,8 @@ def _pick_device(local_rank: int) -> torch.device:
         # Multiple visible devices in this process → map by local_rank (safe-guard with modulo)
         dev = torch.device(f"cuda:{local_rank % nvis}")
 
+    print(torch.cuda.get_device_properties(dev))
+
     torch.cuda.set_device(dev)
     return dev
 
