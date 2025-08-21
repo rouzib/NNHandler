@@ -12,6 +12,10 @@
 
 module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
+export TORCH_NCCL_BLOCKING_WAIT=1
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_DEBUG=INFO
+
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
 
 srun torchrun --nnodes=$SLURM_JOB_NUM_NODES --nproc_per_node=$SLURM_GPUS_PER_NODE /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
