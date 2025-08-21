@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-gpu=1
-#SBATCH --mem-per-cpu=64G
+#SBATCH --mem-per-cpu=16G
 #SBATCH --account=aip-lplevass
 #SBATCH --chdir=/home/r/rouzib/links/scratch
 #SBATCH --output=/home/r/rouzib/links/scratch/ddp_%j.out
