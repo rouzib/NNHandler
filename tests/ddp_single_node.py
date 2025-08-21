@@ -42,7 +42,7 @@ hyperparameters = {
 
 model = NNHandler(model_class=score_models.NCSNpp, model_type=NNHandler.ModelType.SCORE_BASED, device=device,
                   **hyperparameters, logger_mode=NNHandler.LoggingMode.FILE, logger_level=10,
-                  logger_filename="models/MNIST_score_models.log")
+                  logger_filename="models/MNIST_score_models_8.log")
 
 print(model)
 
@@ -50,6 +50,6 @@ model.set_sde(sde_class=score_models.sde.VESDE, sigma_min=1e-2, sigma_max=10)
 model.set_loss_fn(denoising_score_matching)
 model.set_optimizer(torch.optim.Adam, lr=1e-3)
 model.set_scheduler(torch.optim.lr_scheduler.StepLR, step_size=10, gamma=0.9)
-model.auto_save(10, "models", "MNIST_score_models", overwrite=True)
+model.auto_save(10, "models", "MNIST_score_models_8", overwrite=True)
 model.set_train_loader(dataset, batch_size=128)
 model.train(150, validate_every=0, ema_decay=0.99)
