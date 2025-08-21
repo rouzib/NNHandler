@@ -81,9 +81,9 @@ def _is_env_distributed() -> bool:
             rank = int(os.environ['SLURM_PROCID'])
             local_rank = int(os.environ['SLURM_LOCALID'])
             world_size = int(os.environ['SLURM_NTASKS'])
-            num_gpus_on_node = torch.cuda.device_count()
-            if num_gpus_on_node > 0:
-                world_size *= num_gpus_on_node
+            # num_gpus_on_node = torch.cuda.device_count()
+            # if num_gpus_on_node > 0:
+            #     world_size *= num_gpus_on_node
         except ValueError:
             print("WARN: Slurm env vars could not be parsed as integers.")
             return False
