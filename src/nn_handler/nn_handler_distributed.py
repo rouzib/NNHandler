@@ -46,7 +46,7 @@ from .sampler import Sampler
 from .score_models import get_t_schedule
 from .utils import _resolve_device, _initialize_distributed, _should_use_distributed
 
-__version__ = "0.2.6_ddp"
+__version__ = "0.2.7_ddp"
 
 # --- Conditional Imports ---
 try:
