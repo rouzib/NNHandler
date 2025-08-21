@@ -26,9 +26,6 @@ export NCCL_SOCKET_IFNAME=$(srun -N1 -n1 -w "$MASTER_HOST" bash -lc "ip -o -4 ro
 export NCCL_DEBUG=WARN
 export NCCL_ASYNC_ERROR_HANDLING=1
 
-echo ${RDZV_ENDPOINT}
-echo ${NNCL_NCCL_SOCKET_IFNAME}
-
 srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 --gpus-per-task=${SLURM_GPUS_PER_NODE} \
   torchrun \
     --nnodes=${SLURM_JOB_NUM_NODES} \
