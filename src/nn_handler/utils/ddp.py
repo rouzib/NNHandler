@@ -1,4 +1,5 @@
 import os
+import re
 import warnings
 from datetime import timedelta
 from typing import Union, Optional
@@ -91,6 +92,7 @@ def _is_env_distributed() -> bool:
 
     # -------- 3. Nothing useful found --------------------------------------
     else:
+        print("WARN: No DDP environment variables found. Running non-DDP.")
         return False
 
     # -------- 4. Sanity checks ---------------------------------------------
@@ -100,6 +102,56 @@ def _is_env_distributed() -> bool:
         return False
 
     return world_size > 1  # DDP only makes sense if >1 process
+
+
+def _first_host_from_slurm_nodelist(nodelist: str) -> str:
+    """
+    Return the first hostname from SLURM_NODELIST.
+    Handles forms like:
+      - 'gra123'
+      - 'gra[123-126]'
+      - 'nodeA[01,03,07]'
+      - 'nodeA[001-003,007]'
+    """
+    # Plain single host (no brackets)
+    if "[" not in nodelist:
+        return nodelist
+
+    m = re.match(r"^([^\[]+)\[(.+)\]$", nodelist)
+    if not m:
+        # Fallback: be permissive
+        return nodelist
+
+    prefix, body = m.groups()  # e.g., prefix='gra', body='123-126,130'
+    # Split comma groups and take the first group
+    first_group = body.split(",")[0].strip()
+    if "-" in first_group:
+        start, _ = first_group.split("-", 1)
+        first_num = start
+    else:
+        first_num = first_group
+
+    return f"{prefix}{first_num}"
+
+
+def _pick_device(local_rank: int) -> torch.device:
+    if not torch.cuda.is_available():
+        return torch.device("cpu")
+
+    nvis = torch.cuda.device_count()
+    # If Slurm masked us to a single GPU, use index 0 (the masked device)
+    if nvis == 1:
+        dev = torch.device("cuda:0")
+        torch.cuda.set_device(0)
+    else:
+        # Multiple visible devices in this process → map by local_rank (safe-guard with modulo)
+        dev = torch.device(f"cuda:{local_rank % nvis}")
+        torch.cuda.set_device(local_rank % nvis)
+
+    print(torch.cuda.get_device_properties(dev))
+
+    torch.cuda.set_device(dev)
+    return dev
 
 
 def _initialize_distributed(timeout: Optional[timedelta] = None):
@@ -138,58 +190,47 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     _local_rank = int(os.environ['LOCAL_RANK'])
     _world_size = int(os.environ['WORLD_SIZE'])
 
+    print(f"{_rank = }, {_local_rank = }, {_world_size =}")
+
     # --------------------------------- device selection --------------------
-    if torch.cuda.is_available():
-        if torch.cuda.device_count() == 1:
-            _device = torch.device(f"cuda:0")
-        else:
-            _device = torch.device(f"cuda:{_local_rank}")
-        torch.cuda.set_device(_device)
-        backend = "nccl"
-    else:
-        if torch.cuda.is_available():
-            print(f"WARN (Rank {_rank}): LOCAL_RANK {_local_rank} "
-                  f"is out of range for {torch.cuda.device_count()} visible GPU(s).")
-        _device = torch.device("cpu")
-        backend = "gloo"
+    _device = _pick_device(_local_rank)
+    backend = "nccl" if _device.type == "cuda" else "gloo"
 
     # -------------- Ensure MASTER_ADDR / MASTER_PORT exist -----------------
-    # Slurm jobs often export MASTER_ADDR automatically when using `srun`.
     os.environ.setdefault("MASTER_PORT", "29500")
+
     if "MASTER_ADDR" not in os.environ:
-        # Fallback: use the first hostname in the node list, if present.
-        nodelist = os.environ.get("SLURM_NODELIST")
+        # Prefer Slurm-provided hints
+        slurm_host = None
+        nodelist = os.environ.get("SLURM_NODELIST") or os.environ.get("SLURM_JOB_NODELIST")
         if nodelist:
-            # e.g. "node[001-004]" -> "node001"
-            import re
-            match = re.match(r"^([^\[]+)\[(\d+)", nodelist)
-            if match:
-                prefix = match.group(1)
-                first_number = match.group(2)
-                first_node = prefix + first_number
-                os.environ["MASTER_ADDR"] = first_node
-            else:
-                message = ("No host name in the node list. Please set the host name of the node to be used as a "
-                           "host, i.e., in MASTER_ADDR environment variable.")
-                print(f"ERROR (Rank {_rank}): {message}")
-                raise ValueError(message)
+            slurm_host = _first_host_from_slurm_nodelist(nodelist)
         else:
-            # As a last resort, use the current host name.
+            # Single-node steps sometimes expose this
+            slurm_host = os.environ.get("SLURMD_NODENAME")
+
+        if slurm_host:
+            os.environ["MASTER_ADDR"] = slurm_host
+        else:
             import socket
+            # Last resort: current host is fine for 1-node jobs
             os.environ["MASTER_ADDR"] = socket.gethostname()
 
-    # ---------------------------- init -------------------------------------
     print(f"INFO (Rank {_rank}): Initializing process group | "
           f"backend={backend}, world_size={_world_size}, "
           f"local_rank={_local_rank}, device={_device}")
 
-    # A generous timeout helps with slow start-ups on large jobs.
-    dist.init_process_group(
+    # ---------------------------- init -------------------------------------
+    pg_kwargs = dict(
         backend=backend,
         rank=_rank,
         world_size=_world_size,
         timeout=timedelta(minutes=60) if timeout is None else timeout,
     )
+    if backend == "nccl":
+        pg_kwargs["device_id"] = _device
+
+    dist.init_process_group(**pg_kwargs)
 
     dist.barrier()  # safety sync
     print(f"INFO (Rank {_rank}): DDP initialised and barrier passed.")
@@ -199,7 +240,7 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
 
 def initialize_ddp(timeout: Optional[timedelta] = None):
     """
-    Initialize the Distributed Data Parallel (DDP) process group if not already done.
+    Initialize the Distributed Data Parallel (DDP) process group if not already initialized.
 
     This function serves as a public entry point for initializing DDP. It checks if
     the process group is already initialized, and if not, attempts to initialize it
@@ -211,7 +252,7 @@ def initialize_ddp(timeout: Optional[timedelta] = None):
             This is particularly important for large jobs that may take time to start up.
 
     Returns:
-        Union[tuple, None]: 
+        Union[tuple, None]:
             - If DDP was not initialized before: Returns a 5-tuple containing:
                 - distributed (bool): Whether distributed mode is enabled
                 - rank (int): Global rank of this process
