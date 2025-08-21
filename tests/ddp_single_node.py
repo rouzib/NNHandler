@@ -14,6 +14,8 @@ from src.nn_handler.nn_handler_distributed import NNHandler
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+print(device)
+
 def denoising_score_matching(samples, sde, model, device, *args):
     B, *D = samples.shape
     z = torch.randn_like(samples)
@@ -21,6 +23,7 @@ def denoising_score_matching(samples, sde, model, device, *args):
     mean, sigma = sde.marginal_prob(t, samples)
     return torch.sum((z + model(t, mean + sigma * z, *args)) ** 2) / B
 
+print("downloading MNIST dataset...")
 dataset = torchvision.datasets.MNIST('.', train=True, transform=transforms.ToTensor(), download=True)
 dataset = torch.utils.data.TensorDataset(dataset.data.unsqueeze(1) / 255.)
 print(len(dataset))
@@ -40,6 +43,8 @@ hyperparameters = {
 model = NNHandler(model_class=score_models.NCSNpp, model_type=NNHandler.ModelType.SCORE_BASED, device=device,
                   **hyperparameters, logger_mode=NNHandler.LoggingMode.FILE, logger_level=10,
                   logger_filename="models/MNIST_score_models.log")
+
+print(model)
 
 model.set_sde(sde_class=score_models.sde.VESDE, sigma_min=1e-2, sigma_max=10)
 model.set_loss_fn(denoising_score_matching)
