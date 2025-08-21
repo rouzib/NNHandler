@@ -102,6 +102,7 @@ def _is_env_distributed() -> bool:
 
     return world_size > 1  # DDP only makes sense if >1 process
 
+
 def _first_host_from_slurm_nodelist(nodelist: str) -> str:
     """
     Return the first hostname from SLURM_NODELIST.
@@ -130,6 +131,23 @@ def _first_host_from_slurm_nodelist(nodelist: str) -> str:
         first_num = first_group
 
     return f"{prefix}{first_num}"
+
+
+def _pick_device(local_rank: int) -> torch.device:
+    if not torch.cuda.is_available():
+        return torch.device("cpu")
+
+    nvis = torch.cuda.device_count()
+    # If Slurm masked us to a single GPU, use index 0 (the masked device)
+    if nvis == 1:
+        dev = torch.device("cuda:0")
+    else:
+        # Multiple visible devices in this process → map by local_rank (safe-guard with modulo)
+        dev = torch.device(f"cuda:{local_rank % nvis}")
+
+    torch.cuda.set_device(dev)
+    return dev
+
 
 def _initialize_distributed(timeout: Optional[timedelta] = None):
     """
@@ -170,19 +188,8 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     print(f"{_rank = }, {_local_rank = }, {_world_size =}")
 
     # --------------------------------- device selection --------------------
-    if torch.cuda.is_available():
-        if torch.cuda.device_count() == 1:
-            _device = torch.device(f"cuda:0")
-        else:
-            _device = torch.device(f"cuda:{_local_rank}")
-        torch.cuda.set_device(_device)
-        backend = "nccl"
-    else:
-        if torch.cuda.is_available():
-            print(f"WARN (Rank {_rank}): LOCAL_RANK {_local_rank} "
-                  f"is out of range for {torch.cuda.device_count()} visible GPU(s).")
-        _device = torch.device("cpu")
-        backend = "gloo"
+    _device = _pick_device(_local_rank)
+    backend = "nccl" if _device.type == "cuda" else "gloo"
 
     # -------------- Ensure MASTER_ADDR / MASTER_PORT exist -----------------
     os.environ.setdefault("MASTER_PORT", "29500")
@@ -204,24 +211,21 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
             # Last resort: current host is fine for 1-node jobs
             os.environ["MASTER_ADDR"] = socket.gethostname()
 
-        print(f"{os.environ['MASTER_ADDR'] =}")
-        print(f"{os.environ['MASTER_PORT'] =}")
-        print(f"{os.environ['SLURM_JOB_NODELIST'] =}")
-        print(f"{os.environ['SLURM_NODELIST'] =}")
-        print(f"{os.environ['SLURMD_NODENAME'] =}")
-
-    # ---------------------------- init -------------------------------------
     print(f"INFO (Rank {_rank}): Initializing process group | "
           f"backend={backend}, world_size={_world_size}, "
           f"local_rank={_local_rank}, device={_device}")
 
-    # A generous timeout helps with slow start-ups on large jobs.
-    dist.init_process_group(
+    # ---------------------------- init -------------------------------------
+    pg_kwargs = dict(
         backend=backend,
         rank=_rank,
         world_size=_world_size,
         timeout=timedelta(minutes=60) if timeout is None else timeout,
     )
+    if backend == "nccl":
+        pg_kwargs["device_id"] = _device
+
+    dist.init_process_group(**pg_kwargs)
 
     dist.barrier()  # safety sync
     print(f"INFO (Rank {_rank}): DDP initialised and barrier passed.")
