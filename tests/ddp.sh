@@ -15,7 +15,14 @@ module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
 
-echo $SLURM_JOB_NUM_NODES
-echo $SLURM_GPUS_PER_NODE
+MASTER_ADDR=$(scontrol show hostnames "$SLURM_NODELIST" | head -n1)
+MASTER_PORT=29500
+export MASTER_ADDR MASTER_PORT
 
-srun torchrun --nnodes=$SLURM_JOB_NUM_NODES --nproc_per_node=$SLURM_GPUS_PER_NODE /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
+srun torchrun \
+  --nnodes=$SLURM_JOB_NUM_NODES \
+  --nproc_per_node=$SLURM_GPUS_ON_NODE \
+  --rdzv_backend=c10d \
+  --rdzv_endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
+  --rdzv_id="$SLURM_JOB_ID" \
+  /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
