@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --time=0-00:05:00
 #SBATCH --nodes=2
-#SBATCH --ntasks-per-node=1            # one torchrun launcher per node
+#SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=4
 #SBATCH --cpus-per-gpu=1
 #SBATCH --mem-per-cpu=16G
@@ -13,28 +13,22 @@
 
 module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
-
-# Unbuffered stdout so you actually see prints
 export PYTHONUNBUFFERED=1
 
-# Pick first node, get its *compute* IP (not mgmt FQDN)
 MASTER_HOST=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
-MASTER_ADDR=$(srun --nodes=1 --ntasks=1 -w "$MASTER_HOST" bash -lc "hostname -I | awk '{print \$1}'")
-export MASTER_ADDR
+MASTER_FQDN=$(srun -N1 -n1 -w "$MASTER_HOST" bash -lc 'hostname -f')
+export MASTER_ADDR="$MASTER_FQDN"
 export MASTER_PORT=29500
 export RDZV_ENDPOINT="${MASTER_ADDR}:${MASTER_PORT}"
 
-# Networking hints (tune if needed)
-export CUDA_DEVICE_ORDER=PCI_BUS_ID
+# Point NCCL at the default-route interface on the master (often ib0/eno1/eth0)
+export NCCL_SOCKET_IFNAME=$(srun -N1 -n1 -w "$MASTER_HOST" bash -lc "ip -o -4 route show to default | awk '{print \$5}'")
 export NCCL_DEBUG=WARN
 export NCCL_ASYNC_ERROR_HANDLING=1
-# Pick the interface that has the default route on the master (often ib0/eno1/eth0)
-export NCCL_SOCKET_IFNAME=$(srun --nodes=1 --ntasks=1 -w "$MASTER_HOST" bash -lc "ip -o -4 route show to default | awk '{print \$5}'")
 
 echo ${RDZV_ENDPOINT}
 echo ${NNCL_NCCL_SOCKET_IFNAME}
 
-# Launch one torchrun per node; each spawns 4 workers (one per GPU)
 srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 --gpus-per-task=${SLURM_GPUS_PER_NODE} \
   torchrun \
     --nnodes=${SLURM_JOB_NUM_NODES} \
