@@ -15,4 +15,4 @@ module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
 
-srun torchrun --nnodes=2 --nproc_per_node=4 /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
+srun --nodes=2 --ntasks-per-node=1 --ntasks=2 torchrun --nnodes=2 --nproc_per_node=4 /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
