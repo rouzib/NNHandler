@@ -228,11 +228,12 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     if backend == "nccl":
         pg_kwargs["device_id"] = _device
 
-    print(pg_kwargs)
+    if backend == "nccl" and torch.cuda.device_count() == 1 and _world_size > 1:
+        os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 
     dist.init_process_group(**pg_kwargs)
 
-    dist.barrier(device_ids=[_device.index])  # safety sync
+    dist.barrier()  # safety sync
     print(f"INFO (Rank {_rank}): DDP initialised and barrier passed.")
 
     return _distributed, _rank, _local_rank, _world_size, _device
