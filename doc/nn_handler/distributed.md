@@ -48,6 +48,33 @@ source /home/User/ENV/bin/activate
 
 srun /home/User/ENV/bin/python training.py
 ```
+
+## SLURM Job Script Templates
+
+NNHandler provides several SLURM job script templates in the `doc` directory to help you run distributed training on HPC clusters:
+
+1. **Single Node, Multiple GPUs** ([single_node_slurm_job.sh](../single_node_slurm_job.sh)):
+   - For training on a single node with multiple GPUs
+   - Uses `torchrun` to launch the distributed training
+   - Example: 1 node with 4 GPUs
+
+2. **Multiple Nodes, Single GPU per Node** ([multiple_nodes_single_gpu_slurm_job.sh](../multiple_nodes_single_gpu_slurm_job.sh)):
+   - For training across multiple nodes, each with a single GPU
+   - Uses direct `srun` to launch the Python script
+   - Example: 4 nodes with 1 GPU each
+
+3. **Multiple Nodes, Multiple GPUs per Node** ([multiple_nodes_multiple_gpu_slurm_job.sh](../multiple_nodes_multiple_gpu_slurm_job.sh)):
+   - For training across multiple nodes, each with multiple GPUs
+   - Uses `torchrun` with detailed configuration for distributed training
+   - Example: 2 nodes with 4 GPUs each
+   - Includes NCCL configuration for optimal network interface
+
+To use these templates:
+1. Copy the appropriate template to your project directory
+2. Modify the SLURM parameters (time, nodes, GPUs, account, etc.) as needed
+3. Update the Python script path and environment settings
+4. Submit the job with `sbatch your_job_script.sh`
+
 ## How NNHandler Manages DDP
 
 When DDP is enabled, NNHandler handles the following automatically:

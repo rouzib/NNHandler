@@ -59,6 +59,7 @@ The framework revolves around the central `NNHandler` class and its supporting m
 *   [NNHandler Module](doc/nn_handler/README.md): Overview of the core module.
     *   [NNHandler Class](doc/nn_handler/nn_handler.md): Detailed API reference for `NNHandler`.
     *   [Distributed Training (DDP)](doc/nn_handler/distributed.md): Guide to using DDP features.
+        *   [SLURM Job Templates](doc/nn_handler/distributed.md#slurm-job-script-templates): Templates for running distributed training on HPC clusters ([single_node](doc/single_node_slurm_job.sh), [multi-node/single-GPU](doc/multiple_nodes_single_gpu_slurm_job.sh), [multi-node/multi-GPU](doc/multiple_nodes_multiple_gpu_slurm_job.sh)).
     *   [AutoSaver Feature](doc/nn_handler/autosaver.md): Auto-saving configuration.
     *   [Sampler Integration](doc/nn_handler/sampler.md): Using custom samplers.
     *   [Callbacks System](doc/nn_handler/callbacks/README.md): Introduction to callbacks and available implementations.
@@ -121,6 +122,33 @@ handler.save("models/final_handler_state.pth")
 # predictions = loaded_handler.predict(some_data_loader) # Predict gathers on Rank 0
 ```
 *(Remember to run DDP examples using `torchrun`)*
+
+### Running Distributed Training with SLURM
+
+For high-performance computing (HPC) clusters using SLURM, NNHandler provides ready-to-use job templates:
+
+1. **Single Node, Multiple GPUs** ([single_node_slurm_job.sh](doc/single_node_slurm_job.sh)):
+   ```bash
+   # Copy the template and modify as needed
+   cp doc/single_node_slurm_job.sh ./my_training_job.sh
+   # Edit the script to update account, time, and Python file
+   sbatch my_training_job.sh
+   ```
+
+2. **Multiple Nodes, Single GPU per Node** ([multiple_nodes_single_gpu_slurm_job.sh](doc/multiple_nodes_single_gpu_slurm_job.sh)):
+   ```bash
+   # For distributed training across multiple nodes, each with a single GPU
+   sbatch multiple_nodes_single_gpu_slurm_job.sh
+   ```
+
+3. **Multiple Nodes, Multiple GPUs per Node** ([multiple_nodes_multiple_gpu_slurm_job.sh](doc/multiple_nodes_multiple_gpu_slurm_job.sh)):
+   ```bash
+   # For large-scale distributed training with multiple GPUs per node
+   sbatch multiple_nodes_multiple_gpu_slurm_job.sh
+   ```
+
+These templates handle all the necessary environment setup for distributed training, including proper initialization of NCCL for inter-node communication. See the [Distributed Training documentation](doc/nn_handler/distributed.md#slurm-job-script-templates) for detailed information.
+
 ## License
 
 This project is licensed under the MIT License - see the `LICENSE` file for details.
