@@ -1,4 +1,5 @@
 import os
+import re
 import warnings
 from datetime import timedelta
 from typing import Union, Optional
@@ -226,6 +227,8 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     )
     if backend == "nccl":
         pg_kwargs["device_id"] = _device
+
+    print(pg_kwargs)
 
     dist.init_process_group(**pg_kwargs)
 
