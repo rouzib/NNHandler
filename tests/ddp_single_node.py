@@ -15,6 +15,11 @@ print(os.environ['SLURM_PROCID'])
 print(os.environ['SLURM_LOCALID'])
 print(os.environ['SLURM_NTASKS'])
 
+print(os.environ['SLURM_JOB_GPUS'])
+print(os.environ['SLURM_GPUS_PER_NODE'])
+print(os.environ['SLURM_TRES_PER_TASK'])
+print(os.environ['SLURM_STEP_GPUS'])
+
 print(f"{torch.cuda.device_count()} GPUs available. {torch.cuda.is_available()=}")
 print(f"{_is_env_distributed()=}")
 _initialize_distributed()

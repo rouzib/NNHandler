@@ -142,9 +142,11 @@ def _pick_device(local_rank: int) -> torch.device:
     # If Slurm masked us to a single GPU, use index 0 (the masked device)
     if nvis == 1:
         dev = torch.device("cuda:0")
+        torch.cuda.set_device(0)
     else:
         # Multiple visible devices in this process → map by local_rank (safe-guard with modulo)
         dev = torch.device(f"cuda:{local_rank % nvis}")
+        torch.cuda.set_device(local_rank % nvis)
 
     print(torch.cuda.get_device_properties(dev))
 
@@ -227,9 +229,6 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
     )
     if backend == "nccl":
         pg_kwargs["device_id"] = _device
-
-    if backend == "nccl" and torch.cuda.device_count() == 1 and _world_size > 1:
-        os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 
     dist.init_process_group(**pg_kwargs)
 
