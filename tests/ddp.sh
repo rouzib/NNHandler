@@ -12,10 +12,6 @@
 
 module load gcc cuda/12.2 nccl/2.18.3 python/3.11
 
-export NCCL_DEBUG=INFO
-export NCCL_ASYNC_ERROR_HANDLING=1
-export NCCL_BLOCKING_WAIT=1
-
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
 
 srun python /home/r/rouzib/links/scratch/NNHandler/tests/ddp_single_node.py
