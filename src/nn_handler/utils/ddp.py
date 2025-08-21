@@ -232,7 +232,7 @@ def _initialize_distributed(timeout: Optional[timedelta] = None):
 
     dist.init_process_group(**pg_kwargs)
 
-    dist.barrier([_device])  # safety sync
+    dist.barrier(device_ids=[_device])  # safety sync
     print(f"INFO (Rank {_rank}): DDP initialised and barrier passed.")
 
     return _distributed, _rank, _local_rank, _world_size, _device
