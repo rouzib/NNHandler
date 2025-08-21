@@ -12,8 +12,8 @@
 #SBATCH --mail-type=BEGIN
 
 module load gcc cuda/12.2 nccl/2.18.3 python/3.11
+
 source /home/r/rouzib/links/scratch/nn_handler/bin/activate
-export PYTHONUNBUFFERED=1
 
 MASTER_HOST=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
 MASTER_FQDN=$(srun -N1 -n1 -w "$MASTER_HOST" bash -lc 'hostname -f')
@@ -21,10 +21,8 @@ export MASTER_ADDR="$MASTER_FQDN"
 export MASTER_PORT=29500
 export RDZV_ENDPOINT="${MASTER_ADDR}:${MASTER_PORT}"
 
-# Point NCCL at the default-route interface on the master (often ib0/eno1/eth0)
+# Point NCCL at the default-route interface on the master
 export NCCL_SOCKET_IFNAME=$(srun -N1 -n1 -w "$MASTER_HOST" bash -lc "ip -o -4 route show to default | awk '{print \$5}'")
-export NCCL_DEBUG=WARN
-export NCCL_ASYNC_ERROR_HANDLING=1
 
 srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 --gpus-per-task=${SLURM_GPUS_PER_NODE} \
   torchrun \
