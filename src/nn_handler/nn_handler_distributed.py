@@ -2968,7 +2968,7 @@ class NNHandler:
         # Return collected predictions only on Rank 0
         return all_predictions if is_rank_0 else None
 
-    def eval(self, activate: bool = True, log:bool = True):
+    def eval(self, activate: bool = True, log: bool = True):
         """Sets model to evaluation or training mode (all ranks)."""
         if self._model is None:
             return
