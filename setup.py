@@ -4,6 +4,8 @@ Setup script for NNHandler package.
 from setuptools import setup, find_packages
 import os
 
+from src.nn_handler.__version__ import __version__
+
 # Try to read README.rst first (for PyPI), fall back to README.md
 if os.path.exists("README.rst"):
     with open("README.rst", "r", encoding="utf-8") as fh:
@@ -16,7 +18,7 @@ else:
 
 setup(
     name="NNHandler",
-    version="0.2.8",
+    version=__version__,
     author="Nicolas Payot",
     author_email="",
     description="A comprehensive framework for PyTorch neural network handling",
