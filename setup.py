@@ -4,7 +4,7 @@ Setup script for NNHandler package.
 from setuptools import setup, find_packages
 import os
 
-from src.nn_handler.__version__ import __version__
+from .src.nn_handler.__version__ import __version__
 
 # Try to read README.rst first (for PyPI), fall back to README.md
 if os.path.exists("README.rst"):
