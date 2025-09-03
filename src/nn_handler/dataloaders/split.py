@@ -7,7 +7,8 @@ import torch.distributed as dist
 def make_train_val_indices(n_items: int,
                            val_fraction: float = 0.1,
                            seed: int = 1234,
-                           save_path: str | None = None):
+                           save_path: str | None = None,
+                           overwrite: bool = False):
     """
     Create a deterministic train/val index split on rank 0 and broadcast to all ranks.
     Optionally save/load to/from disk so future runs reuse the same split.
@@ -19,7 +20,7 @@ def make_train_val_indices(n_items: int,
     val_idx = None
 
     if rank == 0:
-        if save_path and os.path.exists(save_path):
+        if save_path and os.path.exists(save_path) and not overwrite:
             # Reuse existing split
             data = np.load(save_path, allow_pickle=True)
             train_idx = data["train_idx"]
