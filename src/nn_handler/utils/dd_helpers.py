@@ -9,6 +9,25 @@ from torch.utils.data import DistributedSampler, DataLoader, Dataset, Sequential
 from ..dataloaders.rank_cached_h5_dataloader import EpochShuffleSampler
 
 
+def _collective_device_for_backend() -> torch.device:
+    """
+    Choose a tensor device compatible with the current process group backend.
+    - NCCL / UCC -> CUDA tensor on the current device
+    - GLOO / (others that support CPU) -> CPU tensor
+    """
+    if not dist.is_available() or not dist.is_initialized():
+        # default to CPU if not in DDP (won't be used by collectives anyway)
+        return torch.device("cpu")
+
+    backend_name = str(dist.get_backend()).lower()
+    if backend_name in ("nccl", "ucc"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"{backend_name.upper()} backend requires CUDA available")
+        return torch.device(f"cuda:{torch.cuda.current_device()}")
+    # gloo or anything else defaulting to CPU tensors
+    return torch.device("cpu")
+
+
 def aggregate_metrics(metrics_dict: Dict[str, float], world_size: int, device: torch.device) -> Dict[str, float]:
     """
     Aggregates metrics across distributed processes. This function reduces a
