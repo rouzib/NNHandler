@@ -164,7 +164,7 @@ class NNHandler:
             dist.barrier()
             self.log(f"Rank {self._rank} passed init barrier.", level=logging.DEBUG)
 
-    @on_rank(0)
+    @on_rank(0, barrier=True)
     def log(self, msg: str, level: int = logging.INFO):
         """
         Logs a message with the specified logging level. If a logger instance
@@ -178,7 +178,7 @@ class NNHandler:
         """
         if self.__logger is not None:
             self.__logger.log(level, msg)
-        print(level, ":  ", str(msg))
+        # print(level, ":  ", str(msg))
 
     @on_rank(0)
     def warn(self, msg: str, category: Type[Warning] = None):
