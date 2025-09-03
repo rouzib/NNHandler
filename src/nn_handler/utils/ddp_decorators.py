@@ -40,8 +40,8 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False, check_exception:
                 # Tensor must live on device compatible with the PG backend (e.g., CUDA for NCCL).
                 device = _collective_device_for_backend()
                 success_tensor = torch.ones(1, dtype=torch.int, device=device)
-                result = None
 
+            result = None
             if current_rank in ranks_to_run:
                 try:
                     result = func(*args, **kwargs)
