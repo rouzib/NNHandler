@@ -12,7 +12,7 @@ import cloudpickle as _cp
 from .dd_helpers import _collective_device_for_backend
 
 
-def on_rank(rank: Union[int, List[int]], barrier: bool = False):
+def on_rank(rank: Union[int, List[int]], barrier: bool = False, check_exception: bool = False):
     """
     A decorator to execute a function only on a specific rank or ranks, with robust error handling.
 
@@ -36,28 +36,31 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False):
             current_rank = dist.get_rank()
             ranks_to_run = rank if isinstance(rank, list) else [rank]
 
-            # Tensor must live on device compatible with the PG backend (e.g., CUDA for NCCL).
-            device = _collective_device_for_backend()
-            success_tensor = torch.ones(1, dtype=torch.int, device=device)
-            result = None
+            if check_exception:
+                # Tensor must live on device compatible with the PG backend (e.g., CUDA for NCCL).
+                device = _collective_device_for_backend()
+                success_tensor = torch.ones(1, dtype=torch.int, device=device)
+                result = None
 
             if current_rank in ranks_to_run:
                 try:
                     result = func(*args, **kwargs)
                 except Exception as e:
                     warnings.warn(f"Rank {current_rank} caught an exception in '{func.__name__}': {e}")
-                    success_tensor.zero_()  # mark failure
+                    if check_exception:
+                        success_tensor.zero_()  # mark failure
 
-            # Synchronize success/failure across ALL ranks.
-            dist.all_reduce(success_tensor, op=dist.ReduceOp.MIN)
+            if check_exception:
+                # Synchronize success/failure across ALL ranks.
+                dist.all_reduce(success_tensor, op=dist.ReduceOp.MIN)
 
-            if int(success_tensor.item()) == 0:
-                # Ensure a clean shutdown if any target rank failed.
-                dist.destroy_process_group()
-                raise RuntimeError(
-                    f"A failure was detected on at least one rank during '{func.__name__}'. "
-                    f"Terminating all ranks."
-                )
+                if int(success_tensor.item()) == 0:
+                    # Ensure a clean shutdown if any target rank failed.
+                    dist.destroy_process_group()
+                    raise RuntimeError(
+                        f"A failure was detected on at least one rank during '{func.__name__}'. "
+                        f"Terminating all ranks."
+                    )
 
             if barrier:
                 dist.barrier()
