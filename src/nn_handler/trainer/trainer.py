@@ -193,8 +193,12 @@ def train(nn_handler: 'NNHandler',
             nn_handler._run_callbacks('on_train_batch_begin', batch=batch_idx, logs=batch_logs)
 
             # --- Train Step (Forward, Loss, Backward) ---
-            local_loss_item, local_metrics_items = _train_step(nn_handler, batch_data, epoch,
-                                                                    gradient_accumulation_steps, effective_use_amp)
+            sync_ctx = contextlib.nullcontext() # skip mGPU sync for gradient accumulation steps > 1
+            if gradient_accumulation_steps > 1:
+                sync_ctx = nn_handler._model.no_sync() if nn_handler._distributed else contextlib.nullcontext()
+            with sync_ctx:
+                local_loss_item, local_metrics_items = _train_step(nn_handler, batch_data, epoch,
+                                                                   gradient_accumulation_steps, effective_use_amp)
 
             # --- Accumulate Local Results ---
             if not math.isnan(local_loss_item):
@@ -425,7 +429,8 @@ def train(nn_handler: 'NNHandler',
                         # Log LR change possibility on rank 0
                         if epoch == start_epoch:  # Log once
                             nn_handler.log(
-                                f"Stepped ReduceLROnPlateau scheduler with aggregated val_loss: {avg_val_loss_agg:.4e}", logging.DEBUG)
+                                f"Stepped ReduceLROnPlateau scheduler with aggregated val_loss: {avg_val_loss_agg:.4e}",
+                                logging.DEBUG)
                     elif nn_handler._rank == 0:  # Warn on rank 0 if metric is NaN
                         nn_handler.warn(
                             f"Epoch {current_epoch_1_based}: ReduceLROnPlateau requires a valid aggregated validation metric (e.g., val_loss) "
