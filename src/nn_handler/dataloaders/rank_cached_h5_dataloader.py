@@ -44,8 +44,8 @@ class RankMemCachedH5Dataset(Dataset):
             y_key: Optional[str] = None,
             *,
             mode: str = "contiguous",  # "contiguous" | "interleave"
-            dtype_x: Optional[np.dtype] = np.float32,
-            dtype_y: Optional[np.dtype] = None,
+            x_dtype: Optional[np.dtype] = np.float32,
+            y_dtype: Optional[np.dtype] = None,
             transform: Optional[Callable] = None,
             target_transform: Optional[Callable] = None,
             pin_host_memory: bool = True,  # pin the whole shard in host RAM
@@ -64,8 +64,8 @@ class RankMemCachedH5Dataset(Dataset):
         self.x_key = x_key
         self.y_key = y_key
         self.mode = mode
-        self.dtype_x = dtype_x
-        self.dtype_y = dtype_y
+        self.x_dtype = x_dtype
+        self.y_dtype = y_dtype
         self.transform = transform
         self.target_transform = target_transform
         self.pin_host_memory = pin_host_memory
@@ -115,14 +115,14 @@ class RankMemCachedH5Dataset(Dataset):
                 Y = f[self.y_key]
             # Read in one go (fastest if dataset is chunked sensibly)
             x_np = X[self._global_idx]
-            if self.dtype_x is not None:
-                x_np = x_np.astype(self.dtype_x, copy=False)
+            if self.x_dtype is not None:
+                x_np = x_np.astype(self.x_dtype, copy=False)
             x_t = torch.from_numpy(x_np)
 
             if self.y_key is not None:
                 y_np = Y[self._global_idx]
-                if self.dtype_y is not None:
-                    y_np = y_np.astype(self.dtype_y, copy=False)
+                if self.y_dtype is not None:
+                    y_np = y_np.astype(self.y_dtype, copy=False)
                 y_t = torch.from_numpy(y_np)
             else:
                 y_t = None
