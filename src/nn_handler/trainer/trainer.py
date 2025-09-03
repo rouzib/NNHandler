@@ -194,7 +194,8 @@ def train(nn_handler: 'NNHandler',
 
             # --- Train Step (Forward, Loss, Backward) ---
             sync_ctx = contextlib.nullcontext() # skip mGPU sync for gradient accumulation steps > 1
-            if gradient_accumulation_steps > 1:
+            is_accumulation_step = (batch_idx + 1) % gradient_accumulation_steps == 0
+            if gradient_accumulation_steps > 1 and not is_accumulation_step:
                 sync_ctx = nn_handler._model.no_sync() if nn_handler._distributed else contextlib.nullcontext()
             with sync_ctx:
                 local_loss_item, local_metrics_items = _train_step(nn_handler, batch_data, epoch,
