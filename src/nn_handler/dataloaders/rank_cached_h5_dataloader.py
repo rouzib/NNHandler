@@ -55,6 +55,7 @@ class RankMemCachedH5Dataset(Dataset):
             rdcc_w0: float = 0.75,
             swmr: bool = True,
             log_fn: Callable[[str], None] = print,
+            restrict_to_indices: Optional[Union[np.ndarray, "Sequence[int]"]] = None,
     ):
         if not dist.is_initialized():
             raise RuntimeError("RankMemCachedH5Dataset requires torch.distributed to be initialized.")
@@ -78,12 +79,22 @@ class RankMemCachedH5Dataset(Dataset):
         with h5py.File(self.path, "r") as f:
             self._N = int(f[self.x_key].shape[0])
 
-        # Compute this-rank indices
+        # Base index set (either full range or provided subset)
+        if restrict_to_indices is None:
+            base = np.arange(self._N, dtype=np.int64)
+        else:
+            base = np.asarray(restrict_to_indices, dtype=np.int64)
+            # sanity: clip to valid range and sort to keep I/O friendly for contiguous mode
+            base = base[(base >= 0) & (base < self._N)]
+            base.sort()
+
+        # Compute this-rank indices from 'base'
         if self.mode == "contiguous":
-            start, end = _balanced_contiguous_shard(self._N, self.world_size, self.rank)
-            self._global_idx = np.arange(start, end, dtype=np.int64)
+            start, end = _balanced_contiguous_shard(base.size, self.world_size, self.rank)
+            self._global_idx = base[start:end]
         elif self.mode == "interleave":
-            self._global_idx = _interleaved_indices(self._N, self.world_size, self.rank)
+            local = _interleaved_indices(base.size, self.world_size, self.rank)
+            self._global_idx = base[local]
         else:
             raise ValueError(f"Unknown mode={self.mode}")
 
