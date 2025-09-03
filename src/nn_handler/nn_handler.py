@@ -555,7 +555,7 @@ class NNHandler:
     def train_loader_kwargs(self) -> Dict[str, Any]:
         return self._train_loader_kwargs
 
-    def _setup_loader(self, dataset, val: bool, dataloader_type, loader_kwargs):
+    def _setup_loader(self, dataset, val: bool, dataloader_type, **loader_kwargs):
         """
         Set up a data loader with appropriate defaults for distributed or non-distributed
         environment, as well as train or validation mode. Supports multiple types of
