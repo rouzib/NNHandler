@@ -88,6 +88,19 @@ def broadcast_data(data, src: int = 0):
     return obj_list[0]
 
 
+def broadcast_tensor(tensor: torch.Tensor, src: int = 0):
+    """
+    Broadcasts a tensor from the source rank to all processes in a distributed group.
+
+    :param tensor: Tensor to broadcast (will be sent from src rank and received by all other ranks).
+                   On non-src ranks, pass a tensor of the same shape (will be overwritten).
+    :param src: Rank from which the tensor will be broadcast.
+    :return: The broadcasted tensor, consistent across all ranks after the call.
+    """
+    dist.broadcast(tensor, src=src)
+    return tensor
+
+
 def broadcast_if_ddp(data, src: int = 0):
     """
     Broadcasts data across distributed processes if Distributed Data Parallel (DDP)
@@ -103,7 +116,10 @@ def broadcast_if_ddp(data, src: int = 0):
         the input data unchanged.
     """
     if dist.is_initialized():
-        return broadcast_data(data, src=src)
+        if isinstance(data, torch.Tensor):
+            return broadcast_tensor(data, src=src)
+        else:
+            return broadcast_data(data, src=src)
     else:
         return data
 
@@ -170,7 +186,8 @@ def _create_distributed_loader(dataset: Dataset, loader_kwargs: Dict[str, Any], 
     # Set sensible defaults if not provided
     new_loader_kwargs.setdefault('batch_size', 1)  # Need a default batch size
     # Default num_workers based on SLURM env var or 0
-    new_loader_kwargs.setdefault('num_workers', int(os.environ.get("SLURM_CPUS_PER_TASK", 0)))
+    new_loader_kwargs.setdefault('num_workers',
+                                 int(os.environ.get("SLURM_CPUS_PER_TASK", os.environ.get("SLURM_CPUS_PER_GPU", 0))))
     # Enable pin_memory if using CUDA device
     new_loader_kwargs.setdefault('pin_memory', device.type == 'cuda')
     # Set persistent_workers based on num_workers
