@@ -1,6 +1,6 @@
 from .__version__ import __version__
 from .nn_handler import NNHandler
-from src.nn_handler.model_utils.sampler import Sampler
+from .model_utils.sampler import Sampler
 from .callbacks import *
 from .utils import initialize_ddp, on_rank, parallelize_on_gpus, ModelType, LoggingMode
 from .logger import initialize_logger

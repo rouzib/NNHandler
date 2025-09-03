@@ -34,9 +34,9 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 # --- Local Imports ---
-from src.nn_handler.checkpointing.autosaver import AutoSaver
+from .checkpointing.autosaver import AutoSaver
 from .callbacks.base import Callback
-from src.nn_handler.model_utils.sampler import Sampler
+from .model_utils.sampler import Sampler
 from .utils import _resolve_device, _initialize_distributed, _should_use_distributed
 
 __version__ = "0.2.8_ddp"
