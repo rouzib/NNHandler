@@ -240,6 +240,7 @@ def _create_rank_cached_dataloader(dataset: Dataset, loader_kwargs: Dict[str, An
     # NOTE: num_workers=0 to avoid duplicating the large cached tensor.
     loader_kwargs.setdefault("num_workers", 0)
     loader_kwargs["num_workers"] = 0
+    loader_kwargs.setdefault('pin_memory', device.type == 'cuda')
 
     loader = DataLoader(dataset, sampler=sampler, **loader_kwargs)
 
