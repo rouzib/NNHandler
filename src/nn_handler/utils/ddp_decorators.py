@@ -29,14 +29,16 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # If not distributed, just run.
             if not dist.is_available() or not dist.is_initialized():
                 return func(*args, **kwargs)
 
             current_rank = dist.get_rank()
             ranks_to_run = rank if isinstance(rank, list) else [rank]
 
-            # 1 for success, 0 for failure. Use a CPU tensor for simplicity.
-            success_tensor = torch.tensor([1], dtype=torch.int)
+            # Tensor must live on device compatible with the PG backend (e.g., CUDA for NCCL).
+            device = _collective_device_for_backend()
+            success_tensor = torch.ones(1, dtype=torch.int, device=device)
             result = None
 
             if current_rank in ranks_to_run:
@@ -44,17 +46,15 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False):
                     result = func(*args, **kwargs)
                 except Exception as e:
                     warnings.warn(f"Rank {current_rank} caught an exception in '{func.__name__}': {e}")
-                    success_tensor[0] = 0
+                    success_tensor.zero_()  # mark failure
 
-            # Communicate failure status across all ranks.
-            # The all_reduce operation is itself a synchronization point.
+            # Synchronize success/failure across ALL ranks.
             dist.all_reduce(success_tensor, op=dist.ReduceOp.MIN)
 
-            # If success_tensor is 0, at least one rank failed.
-            if success_tensor[0] == 0:
-                # Raise an exception on all ranks to ensure a clean shutdown.
+            if int(success_tensor.item()) == 0:
+                # Ensure a clean shutdown if any target rank failed.
                 raise RuntimeError(
-                    f"A failure was detected on at least one rank during the execution of '{func.__name__}'. "
+                    f"A failure was detected on at least one rank during '{func.__name__}'. "
                     f"Terminating all ranks."
                 )
 
@@ -62,9 +62,7 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False):
                 dist.barrier()
 
             return result
-
         return wrapper
-
     return decorator
 
 
