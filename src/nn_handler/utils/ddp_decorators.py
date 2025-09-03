@@ -47,12 +47,14 @@ def on_rank(rank: Union[int, List[int]], barrier: bool = False):
                 except Exception as e:
                     warnings.warn(f"Rank {current_rank} caught an exception in '{func.__name__}': {e}")
                     success_tensor.zero_()  # mark failure
+                    raise e
 
             # Synchronize success/failure across ALL ranks.
             dist.all_reduce(success_tensor, op=dist.ReduceOp.MIN)
 
             if int(success_tensor.item()) == 0:
                 # Ensure a clean shutdown if any target rank failed.
+                dist.destroy_process_group()
                 raise RuntimeError(
                     f"A failure was detected on at least one rank during '{func.__name__}'. "
                     f"Terminating all ranks."
