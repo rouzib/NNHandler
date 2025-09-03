@@ -178,6 +178,7 @@ class NNHandler:
         """
         if self.__logger is not None:
             self.__logger.log(level, msg)
+        print(level, ":  ", str(msg))
 
     @on_rank(0)
     def warn(self, msg: str, category: Type[Warning] = None):
