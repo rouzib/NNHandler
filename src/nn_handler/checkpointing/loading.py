@@ -324,6 +324,7 @@ def load(NNHandler,
     handler._seed = state.get("seed")  # Restore seed used for the original training run
     handler._train_loader_kwargs = state.get("train_loader_kwargs", {})  # Store for reference/re-creation
     handler._val_loader_kwargs = state.get("val_loader_kwargs", {})
+    handler._complimentary_kwargs = state.get("complimentary_kwargs", {})
 
     handler.log(f"NNHandler loaded successfully by Rank {current_rank} from: {os.path.basename(path)}")
 

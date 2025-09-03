@@ -72,6 +72,7 @@ class NNHandler:
     _stop_training: bool = False  # Flag for early stopping, needs broadcast
     _grad_scaler: GradScaler = None
     _modules_always_eval: List[nn.Module] = []
+    _complimentary_kwargs: Dict[str, Any] = {}
 
     # --- DDP Specific Attributes ---
     _distributed: bool = False
@@ -318,6 +319,13 @@ class NNHandler:
     @property
     def model_kwargs(self) -> Optional[Dict[str, Any]]:
         return self._model_kwargs
+
+    @property
+    def complimentary_kwargs(self) -> Dict[str, Any]:
+        return self._complimentary_kwargs
+
+    def add_complimentary_kwargs(self, **kwargs):
+        self._complimentary_kwargs.update(**kwargs)
 
     @property
     def model_code(self) -> Optional[str]:
@@ -895,6 +903,7 @@ class NNHandler:
             "pass_epoch_to_loss": self._pass_epoch_to_loss,
             "metrics": self._metrics,  # Caution: pickling metric functions
             "seed": self._seed,
+            "complimentary_kwargs": self._complimentary_kwargs,
             # Device is not saved, as it's determined at load time by rank/environment
 
             # Data Loader Kwargs (Dataset itself is not saved)
