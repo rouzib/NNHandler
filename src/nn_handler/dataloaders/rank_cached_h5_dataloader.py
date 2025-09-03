@@ -8,7 +8,24 @@ from torch.utils.data import Dataset, Sampler
 
 
 def _balanced_contiguous_shard(total: int, world_size: int, rank: int) -> Tuple[int, int]:
-    """Return [start, end) for a balanced contiguous shard."""
+    """
+    Calculate a balanced, contiguous range (shard) for a given total size, evenly
+    distributed across multiple workers (world size). Each rank (worker) will
+    receive its respective shard, ensuring minimal difference in sizes between
+    the shards.
+
+    :param total: The total size to divide into shards.
+    :type total: int
+    :param world_size: The total number of workers among which the shards will
+        be distributed.
+    :type world_size: int
+    :param rank: The rank of the current worker for which the shard is to be
+        calculated (zero-based index).
+    :type rank: int
+    :return: A tuple representing the start (inclusive) and end (exclusive)
+        indices of the shard assigned to the given rank.
+    :rtype: Tuple[int, int]
+    """
     per = total // world_size
     rem = total % world_size
     if rank < rem:
@@ -21,20 +38,71 @@ def _balanced_contiguous_shard(total: int, world_size: int, rank: int) -> Tuple[
 
 
 def _interleaved_indices(total: int, world_size: int, rank: int) -> np.ndarray:
-    """Interleaved shard: indices rank, rank+world_size, ... (good for class balance if needed)."""
+    """
+    Generate interleaved indices for a distributed system, where indices are distributed
+    across multiple ranks. The function calculates indices that are evenly spaced
+    based on the rank of the current process and the total number of processes (world size).
+
+    :param total: Total number of elements to be indexed.
+    :type total: int
+    :param world_size: The number of distributed workers or ranks.
+    :type world_size: int
+    :param rank: The rank of the current worker or process.
+    :type rank: int
+    :return: Numpy array containing interleaved indices for the specified rank.
+    :rtype: np.ndarray
+    """
     return np.arange(rank, total, world_size, dtype=np.int64)
 
 
 class RankMemCachedH5Dataset(Dataset):
     """
-    Preloads the current rank's shard of an HDF5 dataset into host memory ONCE.
-    - No shared HDF5 handles during iteration.
-    - Optionally pin memory for faster H2D copies.
-    - Supports X only or (X, Y).
+    Provides a distributed HDF5 dataset with caching and preloading capabilities, optimized for
+    multi-process environments and large-scale data handling.
 
-    Sharding modes:
-      - mode='contiguous' (default): single contiguous slice per rank (I/O efficient).
-      - mode='interleave': interleaved indices rank, rank+world_size, ... (class-balance friendly).
+    This dataset is designed for efficient use in distributed training by assigning
+    shards of data to each rank in a contiguous or interleaved manner. Additionally,
+    it supports optional caching of the assigned shard in RAM for faster access.
+    Custom transformations can be applied to both the input data and target labels.
+
+    :ivar path: Path to the HDF5 file containing the dataset.
+    :vartype path: str
+    :ivar x_key: HDF5 key identifying the dataset for the input features.
+    :vartype x_key: str
+    :ivar y_key: HDF5 key identifying the dataset for the target labels, if applicable.
+    :vartype y_key: Optional[str]
+    :ivar mode: Determines shard assignment strategy; either "contiguous" or "interleave".
+    :vartype mode: str
+    :ivar x_dtype: Desired data type for input features after loading from HDF5.
+    :vartype x_dtype: Optional[np.dtype]
+    :ivar y_dtype: Desired data type for target labels after loading from HDF5.
+    :vartype y_dtype: Optional[np.dtype]
+    :ivar transform: Callable transformation applied to input features.
+    :vartype transform: Optional[Callable]
+    :ivar target_transform: Callable transformation applied to target labels.
+    :vartype target_transform: Optional[Callable]
+    :ivar pin_host_memory: Whether to pin the cached shard in host memory for faster I/O.
+    :vartype pin_host_memory: bool
+    :ivar share_memory: Whether to place cached tensors in shared memory for multi-process access.
+    :vartype share_memory: bool
+    :ivar log: Logging function for status updates and warnings.
+    :vartype log: Callable[[str], None]
+    :ivar rank: The current rank of the distributed process.
+    :vartype rank: int
+    :ivar world_size: Total number of processes in the distributed setup.
+    :vartype world_size: int
+    :ivar _N: Total number of samples in the dataset.
+    :vartype _N: int
+    :ivar _global_idx: Global indices assigned to the current rank.
+    :vartype _global_idx: np.ndarray
+    :ivar _len: Number of samples assigned to the current rank.
+    :vartype _len: int
+    :ivar _preload_kwargs: Arguments used for preloading HDF5 shards.
+    :vartype _preload_kwargs: dict
+    :ivar _x_cache: Cached input features for the current rank's shard.
+    :vartype _x_cache: Optional[torch.Tensor]
+    :ivar _y_cache: Cached target labels for the current rank's shard, if applicable.
+    :vartype _y_cache: Optional[torch.Tensor]
     """
 
     def __init__(
@@ -168,8 +236,21 @@ class RankMemCachedH5Dataset(Dataset):
 
 class EpochShuffleSampler(Sampler[int]):
     """
-    Sampler for a LOCAL dataset (already sharded) that reshuffles each epoch.
-    Call .set_epoch(epoch) before each epoch.
+    A sampler class for shuffling datasets with per-epoch control.
+
+    Provides functionality to shuffle dataset indices deterministically using a
+    base seed and epoch number. The class allows setting the epoch to alter the
+    shuffling sequence for each epoch, ensuring reproducibility across different
+    epochs.
+
+    :ivar data_len: The total number of items in the dataset.
+    :type data_len: int
+    :ivar base_seed: The base seed used for initializing the random number generator.
+    :type base_seed: int
+    :ivar shuffle: Flag to determine whether shuffling of indices is enabled or not.
+    :type shuffle: bool
+    :ivar epoch: The current epoch number used to modify the shuffling sequence.
+    :type epoch: int
     """
 
     def __init__(self, data_len: int, seed: int = 0, shuffle: bool = True):

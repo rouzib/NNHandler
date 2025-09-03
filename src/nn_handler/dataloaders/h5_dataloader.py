@@ -8,10 +8,39 @@ from torch.utils.data import Dataset, get_worker_info
 
 class H5LazyDataset(Dataset):
     """
-    DDP-/multiprocess-safe HDF5 dataset.
-    - Opens the HDF5 file lazily in each worker/process (no shared handles).
-    - Supports optional (x_key, y_key) for (input, target) pairs.
-    - Optional transforms for x and y.
+    Provides a lazy-loading dataset interface for HDF5-based datasets.
+
+    This class is designed to handle HDF5 datasets with lazy loading, which
+    avoids loading the entire dataset into memory. It supports optional
+    transformation of inputs and targets, as well as optimized file access
+    via specific HDF5 cache settings. The dataset design ensures compatibility
+    with multi-process data loaders through processes like PyTorch's DataLoader.
+
+    :ivar path: Path to the HDF5 file.
+    :type path: str
+    :ivar x_key: Key corresponding to the input dataset within the HDF5 file.
+    :type x_key: str
+    :ivar y_key: Key corresponding to the target dataset within the HDF5 file, optional.
+    :type y_key: Optional[str]
+    :ivar x_dtype: Desired dtype for input data after loading, optional.
+    :type x_dtype: Optional[numpy.dtype]
+    :ivar y_dtype: Desired dtype for target data after loading, optional.
+    :type y_dtype: Optional[numpy.dtype]
+    :ivar transform: Transformations applied to the input data, optional.
+    :type transform: Optional[Callable]
+    :ivar target_transform: Transformations applied to the target data, optional.
+    :type target_transform: Optional[Callable]
+    :ivar _h5_args: Dictionary of settings for HDF5 file access (including caching and
+                    file locking strategies).
+    :type _h5_args: dict
+    :ivar _length: Number of samples in the dataset, lazily determined from the HDF5 file.
+    :type _length: int
+    :ivar _file: Internal handle to the open HDF5 file, initialized as None.
+    :type _file: Optional[h5py.File]
+    :ivar _x: Internal handle to the input dataset within the HDF5 file, initialized as None.
+    :type _x: Optional[h5py.Dataset]
+    :ivar _y: Internal handle to the target dataset within the HDF5 file, initialized as None.
+    :type _y: Optional[h5py.Dataset]
     """
 
     def __init__(
@@ -110,8 +139,15 @@ class H5LazyDataset(Dataset):
 
 def h5_worker_init_fn(_worker_id: int):
     """
-    Ensures no accidentally inherited HDF5 handles remain.
-    You can also reseed RNGs here if needed.
+    Initializes the worker for the dataset in a multiprocessing DataLoader setting. This function ensures that each worker
+    is properly initialized and closes any open dataset connections if applicable. It is particularly useful for managing
+    datasets with file-based resources, such as HDF5 files, that require proper handling in a multi-worker environment.
+
+    :param _worker_id: The ID of the worker process. Used to differentiate between multiple workers in cases where
+                       specific worker initialization is necessary.
+    :type _worker_id: int
+
+    :return: None
     """
     info = get_worker_info()
     if info is not None and hasattr(info.dataset, "close"):
