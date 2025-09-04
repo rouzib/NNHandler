@@ -314,7 +314,7 @@ class SdeSolver:
                 # Update progress bar postfix (rank 0)
                 if bar:
                     postfix_dict = {"t": f"{t_current.item():.3f}",
-                                    "sigma": f"{self.sde.sigma(t_current)[0].item():.2e}",
+                                    "sigma": f"{self.sde.sigma(t_current).item():.2e}",
                                     "|x|": f"{x.abs().mean().item():.2e}"}
                     pbar_iterator.set_postfix(postfix_dict, refresh=False)
 
