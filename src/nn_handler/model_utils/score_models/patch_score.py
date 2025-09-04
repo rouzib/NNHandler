@@ -63,6 +63,8 @@ def patch_score_vectorized(nn_handler, t, x, patch_size=16, stride=6, patch_chun
     ii, jj = torch.meshgrid(rows, cols, indexing='ij')  # (patch_H, patch_W)
     top_y = ii.reshape(-1)  # (num_patches,)
     left_x = jj.reshape(-1)  # (num_patches,)
+    if t.ndim == 0:
+        t = t.unsqueeze(0)
 
     if patch_chunk is None:
         # --- Single pass ---
