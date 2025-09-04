@@ -110,7 +110,7 @@ def patch_score_vectorized(nn_handler, t, x, patch_size=16, stride=6, patch_chun
 
             # Build only the needed position grids for this chunk
             pos_list = [
-                make_pos_grid(int(x0), int(y0), patch_size, H)
+                make_pos_grid(int(x0), int(y0), patch_size, H, nn_handler.device)
                 for y0, x0 in zip(top_y[start:end].tolist(), left_x[start:end].tolist())
             ]
             pos_chunk = torch.cat(pos_list, dim=0)  # (npi, 2, p, p)
