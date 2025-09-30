@@ -1393,9 +1393,9 @@ class NNHandler:
         t_dev = t.expand(x.shape[0]).to(self._device)
         x_dev = x.to(self._device)
 
-        # Get model output using the underlying module
+        # Get model output using the underlying model
         # Pass through any additional args
-        model_output = self.module(t_dev, x_dev, *args)
+        model_output = self._model(t_dev, x_dev, *args)
 
         # Get sigma(t) from SDE
         sigma_t = self._sde.sigma(t_dev)  # Assume sigma(t) returns tensor of shape (B,)
