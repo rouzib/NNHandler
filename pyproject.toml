@@ -2,21 +2,3 @@
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[project]
-name = "NNHandler"
-version = "0.1.0"
-description = "A comprehensive framework for PyTorch neural network handling"
-authors = [{ name="Nicolas Payot" }]
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "torch>=2.0",
-    "cloudpickle>=3.0.0",
-    "numpy",
-    "matplotlib",
-    "tqdm",
-    "torch_ema>=0.3",
-]
-
-[project.scripts]
-nn_handler_run = "nn_handler.cli:main"
