@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--rdzv-backend", type=str, default="c10d",
                         help="Rendezvous backend (default: c10d).")
     parser.add_argument("--rdzv-endpoint", type=str,
-                        default=_env_default("RDZV_ENDPOINT", f"{_env_default('HOSTNAME','localhost')}:29500"),
+                        default=_env_default("RDZV_ENDPOINT", f"{_env_default('HOSTNAME', 'localhost')}:29500"),
                         help="host:port for rendezvous (default: RDZV_ENDPOINT or HOSTNAME:29500).")
     parser.add_argument("--rdzv-id", type=str,
                         default=_env_default("SLURM_JOB_ID", "0"),
@@ -99,7 +99,7 @@ def main():
     # Finally the training script + its args
     cmd += [args.script, *script_args]
 
-    print("[nn_handler_run] Executing:", " ".join(cmd), flush=True)
+    # print("[nn_handler_run] Executing:", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
 
 
