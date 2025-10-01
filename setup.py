@@ -29,6 +29,11 @@ setup(
     long_description_content_type=long_description_content_type,
     url="https://github.com/rouzib/NNHandler",
     packages=find_packages(where="src"),
+    entry_points={
+            "console_scripts": [
+                "nn_handler_run = nn_handler.cli:main",  # <== this is new
+            ],
+        },
     package_dir={"": "src"},
     classifiers=[
         "Programming Language :: Python :: 3",
