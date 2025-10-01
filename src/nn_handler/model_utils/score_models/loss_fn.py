@@ -38,6 +38,7 @@ def patch_denoising_score_matching(
     device: torch.device,
     patch_sizes,
     patches_per_sample: int = 1,
+    pass_grid: bool = True,
     *extra_conditions
 ) -> torch.Tensor:
     """
@@ -50,6 +51,7 @@ def patch_denoising_score_matching(
         device (torch.device)
         patch_sizes: List of possible patch sizes.
         patches_per_sample (int): How many patches to generate per sample in this batch.
+        pass_grid (bool): Whether to pass positional encoding to the model.
         *extra_conditions: Additional model conditions.
 
     Returns:
@@ -77,13 +79,15 @@ def patch_denoising_score_matching(
             patch = images[n, :, i[n]:i[n]+th, j[n]:j[n]+tw].unsqueeze(0)
             patches.append(patch)
             # Positional encoding
-            x_pos = torch.arange(tw, dtype=torch.float32, device=device) / (w - 1) * 2 - 1
-            y_pos = torch.arange(th, dtype=torch.float32, device=device) / (h - 1) * 2 - 1
-            mesh_y, mesh_x = torch.meshgrid(y_pos, x_pos, indexing='ij')
-            pos_grid = torch.stack([mesh_x, mesh_y], dim=0).unsqueeze(0)
-            pos_grids.append(pos_grid)
+            if pass_grid:
+                x_pos = torch.arange(tw, dtype=torch.float32, device=device) / (w - 1) * 2 - 1
+                y_pos = torch.arange(th, dtype=torch.float32, device=device) / (h - 1) * 2 - 1
+                mesh_y, mesh_x = torch.meshgrid(y_pos, x_pos, indexing='ij')
+                pos_grid = torch.stack([mesh_x, mesh_y], dim=0).unsqueeze(0)
+                pos_grids.append(pos_grid)
         patches = torch.cat(patches, dim=0)
-        pos_grids = torch.cat(pos_grids, dim=0)
+        if pass_grid:
+            pos_grids = torch.cat(pos_grids, dim=0)
         return patches, pos_grids
 
     B, C, H, W = samples.shape
@@ -115,6 +119,9 @@ def patch_denoising_score_matching(
     mean, sigma = sde.marginal_prob(t, patches)
 
     noisy = mean + sigma * z
-    score = model(t, noisy, pos_grids, *expanded_conditions)
+    if pass_grid:
+        score = model(t, noisy, pos_grids, *expanded_conditions)
+    else:
+        score = model(t, noisy, *expanded_conditions)
     loss = torch.sum((z + score) ** 2, dim=[1, 2, 3]).mean()
     return loss
