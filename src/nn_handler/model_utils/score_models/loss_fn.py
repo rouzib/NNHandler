@@ -86,7 +86,8 @@ def patch_denoising_score_matching(
                 pos_grid = torch.stack([mesh_x, mesh_y], dim=0).unsqueeze(0)
                 pos_grids.append(pos_grid)
         patches = torch.cat(patches, dim=0)
-        pos_grids = torch.cat(pos_grids, dim=0)
+        if pass_grid:
+            pos_grids = torch.cat(pos_grids, dim=0)
         return patches, pos_grids
 
     B, C, H, W = samples.shape
@@ -111,7 +112,8 @@ def patch_denoising_score_matching(
         patches.append(patch)
         pos_grids.append(pos)
     patches = torch.cat(patches, dim=0)
-    pos_grids = torch.cat(pos_grids, dim=0)
+    if pass_grid:
+        pos_grids = torch.cat(pos_grids, dim=0)
 
     z = torch.randn_like(patches)
     t = torch.rand(total_patches, device=device) * (sde.T - sde.epsilon) + sde.epsilon
