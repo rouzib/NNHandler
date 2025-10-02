@@ -46,8 +46,8 @@ def patchify(images, patch_size, return_pos=True, image_res=None):
         patches.append(patch)
         # Positional encoding
         if return_pos:
-            x_pos = (j[n] + torch.arange(tw, device=device)) / (w - 1) * 2 - 1
-            y_pos = (i[n] + torch.arange(th, device=device)) / (h - 1) * 2 - 1
+            x_pos = (j[n] + torch.arange(tw, device=device)) / (res_w - 1) * 2 - 1
+            y_pos = (i[n] + torch.arange(th, device=device)) / (res_h - 1) * 2 - 1
             mesh_y, mesh_x = torch.meshgrid(y_pos, x_pos, indexing='ij')
             pos_grid = torch.stack([mesh_x, mesh_y], dim=0).unsqueeze(0)
             pos_grids.append(pos_grid)
