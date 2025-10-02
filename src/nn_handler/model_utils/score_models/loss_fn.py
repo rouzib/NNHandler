@@ -1,6 +1,6 @@
 import torch
 
-from .patches import pachify
+from .patches import patchify
 
 
 def denoising_score_matching(samples, sde, model, device, *args):
@@ -79,10 +79,10 @@ def patch_denoising_score_matching(
     pos_grids = []
     for idx, p in enumerate(patch_sizes_for_each):
         if pass_grid:
-            patch, pos = pachify(expanded_samples[idx:idx+1], p, pass_grid)
+            patch, pos = patchify(expanded_samples[idx:idx + 1], p, pass_grid)
             pos_grids.append(pos)
         else:
-            patch = pachify(expanded_samples[idx:idx+1], p, pass_grid)
+            patch = patchify(expanded_samples[idx:idx + 1], p, pass_grid)
         patches.append(patch)
     patches = torch.cat(patches, dim=0)
     if pass_grid:

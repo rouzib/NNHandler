@@ -1,7 +1,7 @@
 import torch
 
 
-def pachify(images, patch_size, return_pos=True, image_res=None):
+def patchify(images, patch_size, return_pos=True, image_res=None):
     """
     Extracts randomly selected patches from input images and optionally computes positional encodings for the patches.
     Supports both unpadded and padded image scenarios, accounting for any central cropping applied to the images
