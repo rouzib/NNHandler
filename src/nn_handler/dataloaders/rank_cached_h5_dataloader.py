@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Callable, Iterator, Union
+from typing import Optional, Tuple, Callable, Iterator, Union, Dict
 
 import h5py
 import numpy as np
@@ -110,6 +110,7 @@ class RankMemCachedH5Dataset(Dataset):
             path: str,
             x_key: str,
             y_key: Optional[str] = None,
+            aux_keys: Optional[Union[str, Tuple[str, ...]]] = None,
             *,
             mode: str = "contiguous",  # "contiguous" | "interleave"
             x_dtype: Optional[np.dtype] = np.float32,
@@ -131,6 +132,7 @@ class RankMemCachedH5Dataset(Dataset):
         self.path = path
         self.x_key = x_key
         self.y_key = y_key
+        self.aux_keys = aux_keys
         self.mode = mode
         self.x_dtype = x_dtype
         self.y_dtype = y_dtype
@@ -173,6 +175,8 @@ class RankMemCachedH5Dataset(Dataset):
                                     rdcc_nbytes=rdcc_nbytes, rdcc_nslots=rdcc_nslots, rdcc_w0=rdcc_w0)
         self._x_cache: Optional[torch.Tensor] = None
         self._y_cache: Optional[torch.Tensor] = None
+        self._aux_caches: Optional[Dict[str, torch.tensor]] = {key: None for key in self.aux_keys}
+
         self._preload_shard()
 
     def _preload_shard(self) -> None:
@@ -195,17 +199,28 @@ class RankMemCachedH5Dataset(Dataset):
             else:
                 y_t = None
 
+            for key in self.aux_keys:
+                aux_np = f[key][self._global_idx]
+                aux_t = torch.from_numpy(aux_np)
+                self._aux_caches[key] = aux_t
+
         # Optional memory placement tweaks
         if self.share_memory:
             x_t = x_t.share_memory_()
             if y_t is not None:
                 y_t = y_t.share_memory_()
+            for key in self.aux_keys:
+                if self._aux_caches[key] is not None:
+                    self._aux_caches[key] = self._aux_caches[key].share_memory_()
 
         if self.pin_host_memory:
             try:
                 x_t = x_t.pin_memory()
                 if y_t is not None:
                     y_t = y_t.pin_memory()
+                for key in self.aux_keys:
+                    if self._aux_caches[key] is not None:
+                        self._aux_caches[key] = self._aux_caches[key].pin_memory()
             except RuntimeError:
                 # Pinning can fail on some systems; fall back gracefully
                 self.log(f"[rank {self.rank}] Warning: pin_memory() failed; continuing unpinned.")
@@ -224,13 +239,20 @@ class RankMemCachedH5Dataset(Dataset):
 
     def __getitem__(self, idx: int):
         x = self._x_cache[idx]
+        if self.aux_keys is not None:
+            aux = {key: self._aux_caches[key][idx] for key in self.aux_keys}
+        else:
+            aux = None
         if self._y_cache is None:
-            return self.transform(x) if self.transform else x
+            if aux:
+                return self.transform(x, aux) if self.transform else x
+            else:
+                return self.transform(x) if self.transform else x
         y = self._y_cache[idx]
         if self.transform:
-            x = self.transform(x)
+            x = self.transform(x, aux) if aux else self.transform(x)
         if self.target_transform:
-            y = self.target_transform(y)
+            y = self.target_transform(y, aux) if aux else self.target_transform(y)
         return x, y
 
 
