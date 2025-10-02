@@ -6,11 +6,13 @@ from enum import Enum
 from .utils import on_rank
 from .utils.enums import LoggingMode
 
+
 @on_rank(0)
 def initialize_logger(
         logger_name: str,
         mode: LoggingMode = LoggingMode.CONSOLE,
         filename: str = "NNHandler.log",
+        file_mode: str = "a",
         level: int = logging.INFO):
     """
     Initializes and returns a logger instance for the given logger_name and configuration.
@@ -41,7 +43,7 @@ def initialize_logger(
             log_dir = os.path.dirname(filename)
             if log_dir:
                 os.makedirs(log_dir, exist_ok=True)
-            file_handler = logging.FileHandler(filename, mode='a')
+            file_handler = logging.FileHandler(filename, mode=file_mode)
             file_handler.setLevel(level)
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)

@@ -114,6 +114,7 @@ class NNHandler:
                  device: Union[torch.device, str] = "cpu",
                  logger_mode: Optional[LoggingMode] = None,
                  logger_filename: str = "NNHandler.log",
+                 logger_filemode: str = "a",
                  logger_level: int = logging.INFO,
                  save_model_code: bool = False,
                  model_type: Union[ModelType, str] = ModelType.CLASSIFICATION,
@@ -128,7 +129,8 @@ class NNHandler:
         self._model_kwargs = model_kwargs
 
         if logger_mode is not None:
-            self.__logger = initialize_logger("NNHandler", logger_mode, logger_filename, logger_level)
+            self.__logger = initialize_logger("NNHandler", logger_mode, logger_filename, logger_filemode,
+                                              logger_level)
 
         # --- Initialize AutoSaver ---
         # Only save code on rank 0
