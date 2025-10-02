@@ -1,5 +1,7 @@
 import torch
 
+from .patches import pachify
+
 
 def denoising_score_matching(samples, sde, model, device, *args):
     """
@@ -58,38 +60,6 @@ def patch_denoising_score_matching(
         torch.Tensor: Scalar loss.
     """
 
-    def pachify(images, patch_size):
-        device = images.device
-        batch_size, _, res_h, res_w = images.size()
-
-        h, w = res_h, res_w
-        th, tw = patch_size, patch_size
-
-        if w == tw and h == th:
-            i = torch.zeros((batch_size,), device=device, dtype=torch.long)
-            j = torch.zeros((batch_size,), device=device, dtype=torch.long)
-        else:
-            i = torch.randint(0, h - th + 1, (batch_size,), device=device)
-            j = torch.randint(0, w - tw + 1, (batch_size,), device=device)
-
-        # [batch_size, C, th, tw]
-        patches = []
-        pos_grids = []
-        for n in range(batch_size):
-            patch = images[n, :, i[n]:i[n]+th, j[n]:j[n]+tw].unsqueeze(0)
-            patches.append(patch)
-            # Positional encoding
-            if pass_grid:
-                x_pos = torch.arange(tw, dtype=torch.float32, device=device) / (w - 1) * 2 - 1
-                y_pos = torch.arange(th, dtype=torch.float32, device=device) / (h - 1) * 2 - 1
-                mesh_y, mesh_x = torch.meshgrid(y_pos, x_pos, indexing='ij')
-                pos_grid = torch.stack([mesh_x, mesh_y], dim=0).unsqueeze(0)
-                pos_grids.append(pos_grid)
-        patches = torch.cat(patches, dim=0)
-        if pass_grid:
-            pos_grids = torch.cat(pos_grids, dim=0)
-        return patches, pos_grids
-
     B, C, H, W = samples.shape
     total_patches = B * patches_per_sample
 
@@ -108,9 +78,12 @@ def patch_denoising_score_matching(
     patches = []
     pos_grids = []
     for idx, p in enumerate(patch_sizes_for_each):
-        patch, pos = pachify(expanded_samples[idx:idx+1], p)  # Shape: [1, C, p, p], [1, 2, p, p]
+        if pass_grid:
+            patch, pos = pachify(expanded_samples[idx:idx+1], p, pass_grid)
+            pos_grids.append(pos)
+        else:
+            patch = pachify(expanded_samples[idx:idx+1], p, pass_grid)
         patches.append(patch)
-        pos_grids.append(pos)
     patches = torch.cat(patches, dim=0)
     if pass_grid:
         pos_grids = torch.cat(pos_grids, dim=0)
