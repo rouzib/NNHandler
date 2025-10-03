@@ -33,15 +33,48 @@ def denoising_score_matching(samples, sde, model, device, *args):
     return torch.sum((z + model(t, mean + sigma * z, *args)) ** 2) / B
 
 
-def patch_denoising_score_matching(
-    samples: torch.Tensor,
-    sde,
-    model,
-    device: torch.device,
-    patch_sizes,
-    patches_per_sample: int = 1,
-    pass_grid: bool = True,
-    *extra_conditions
+def patch_denoising_score_matching(samples, sde, model, device, *args):
+    """
+    Calculates the denoising score matching loss function for the given samples using
+    a specified score-based diffusion model and stochastic differential equation (SDE).
+
+    This function computes the loss for the denoising process by sampling time points
+    from a uniform distribution, generating noise, and evaluating the score-based
+    model. The mean and standard deviation of the SDE are used to perturb the
+    samples, forming a target distribution. The loss is calculated as the sum of
+    squared residuals normalized by the batch size.
+
+    :param samples: A tensor containing the input samples with their associated
+                    positional grids appended at the last two channel dimensions.
+    :param sde: An instance of a stochastic differential equation (SDE) class, which
+                provides methods for evaluating the marginal probability distribution.
+    :param model: The score-based model used for calculating the denoising loss.
+    :param device: The computational device (e.g., 'cpu' or 'cuda') where calculations
+                   are performed.
+    :param args: Additional arguments required by the score-based model.
+    :return: The computed denoising score matching loss.
+    :rtype: torch.Tensor
+    """
+    pos_grids = samples[:, -2:]
+    samples = samples[:, :-2]
+
+    B, *D = samples.shape
+    z = torch.randn_like(samples)
+    t = torch.rand(B).to(device) * (sde.T - sde.epsilon) + sde.epsilon
+    mean, sigma = sde.marginal_prob(t, samples)
+
+    return torch.sum((z + model(t, mean + sigma * z, pos_grids, *args)) ** 2) / B
+
+
+def patchify_denoising_score_matching(
+        samples: torch.Tensor,
+        sde,
+        model,
+        device: torch.device,
+        patch_sizes,
+        patches_per_sample: int = 1,
+        pass_grid: bool = True,
+        *extra_conditions
 ) -> torch.Tensor:
     """
     Computes the DSM loss using patches. Allows batching & multiple patches per input.
