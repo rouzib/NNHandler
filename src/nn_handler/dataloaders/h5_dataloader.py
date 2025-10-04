@@ -81,7 +81,7 @@ class H5LazyDataset(Dataset):
         self._file = None
         self._x = None
         self._y = None
-        self._aux = None
+        self._aux = {}
 
     def _ensure_open(self):
         if self._file is None:
