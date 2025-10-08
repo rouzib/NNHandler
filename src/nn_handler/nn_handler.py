@@ -1415,7 +1415,8 @@ class NNHandler:
     def sample(self, shape: Tuple[int, ...], steps: int, corrector_steps: int = 0, condition: Optional[list] = None,
                likelihood_score_fn: Optional[Callable] = None, guidance_factor: float = 1.,
                apply_ema: bool = True, bar: bool = True, stop_on_NaN: bool = True, patch_size: int = None,
-               stride: int = None, patch_chunk: int = None, corrector_snr: float = 0.1) -> Optional[Tensor]:
+               stride: int = None, patch_chunk: int = None, corrector_snr: float = 0.1,
+               on_step: Optional[Callable[[int, torch.Tensor, torch.Tensor], None]] = None) -> Optional[Tensor]:
         """
         Generates samples using a stochastic differential equation (SDE) solver. The method involves solving
         a sampling process over a defined number of steps, with optional parameters for additional conditions,
@@ -1440,6 +1441,8 @@ class NNHandler:
             patch_chunk (int): Number of patches to process simultaneously in a chunk during patch-based
                 sampling. Defaults to None.
             corrector_snr (float): Signal-to-noise ratio (SNR) threshold used by the corrector. Defaults to 0.1.
+            on_step (Optional[Callable[[int, torch.Tensor, torch.Tensor], None]]): Optional callable to be called after
+                each step. Takes i, t, and x as an input.
 
         Returns:
             Optional[Tensor]: A tensor containing the generated samples, or None if sampling fails or conditions
@@ -1447,4 +1450,4 @@ class NNHandler:
         """
         solver = SdeSolver(self)
         return solver.solve(shape, steps, corrector_steps, condition, likelihood_score_fn, guidance_factor, apply_ema,
-                            bar, stop_on_NaN, patch_size, stride, patch_chunk, corrector_snr)
+                            bar, stop_on_NaN, patch_size, stride, patch_chunk, corrector_snr, on_step)

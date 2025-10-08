@@ -210,7 +210,8 @@ class SdeSolver:
     def solve(self, shape: Tuple[int, ...], steps: int, corrector_steps: int = 0, condition: Optional[list] = None,
               likelihood_score_fn: Optional[Callable] = None, guidance_factor: float = 1.,
               apply_ema: bool = True, bar: bool = True, stop_on_NaN: bool = True, patch_size: int = None,
-              stride: int = None, patch_chunk: int = None, corrector_snr: float = 0.1):
+              stride: int = None, patch_chunk: int = None, corrector_snr: float = 0.1,
+              on_step: Optional[Callable[[int, torch.Tensor, torch.Tensor], None]] = None):
         """
         Solves the given stochastic differential equation (SDE) to generate samples using a specified number of
         steps and optional guidance, likelihood scoring, and sampling corrections. Includes options for handling
@@ -251,6 +252,8 @@ class SdeSolver:
                 Number of patches to process at each time step if patch-based mode is enabled.
             corrector_snr:
                 Signal-to-noise ratio used during corrector steps. Default is 0.1.
+            on_step:
+                Callback function to be executed after each step. Takes i, t, and x as an input.
 
         Returns:
             torch.Tensor:
@@ -302,6 +305,9 @@ class SdeSolver:
                                   likelihood_score_fn, guidance_factor)
                 for j in range(corrector_steps):
                     x = self.corrector_step(t_current, x, corrector_snr, condition, patch_size, stride, patch_chunk)
+
+                if on_step is not None:
+                    on_step(i, t_current, x)
 
                 # Check for numerical issues
                 if torch.any(torch.isnan(x)) or torch.any(torch.isinf(x)):
