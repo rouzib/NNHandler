@@ -4,7 +4,7 @@ from typing import Tuple, Optional, Callable
 
 import torch
 from torch import Tensor
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .patch_score import patch_score_vectorized
 from .schedules import get_t_schedule
