@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .base import Callback
+from ..utils import autocast
 
 try:
     import matplotlib.pyplot as plt
@@ -118,10 +119,11 @@ class BasePredictionVisualizer(Callback):
         # Run prediction (using handler's __call__ or predict logic)
         self.handler.model.eval()  # Ensure eval mode
         with torch.no_grad():
-            # Apply EMA context if handler uses it? Maybe add flag? For simplicity, don't apply EMA here.
-            # Use handler's __call__ which uses the *current* model state (could be EMA or not)
-            model_inputs = batch_data[0]
-            predictions = self.get_predictions_fn(self.handler, model_inputs, **additional_params)
+            with autocast(device_type=self.handler._device.type, enabled=True):
+                # Apply EMA context if handler uses it? Maybe add flag? For simplicity, don't apply EMA here.
+                # Use handler's __call__ which uses the *current* model state (could be EMA or not)
+                model_inputs = batch_data[0]
+                predictions = self.get_predictions_fn(self.handler, model_inputs, **additional_params)
 
         return batch_data[0], batch_data[1], predictions  # inputs, targets, predictions
 
