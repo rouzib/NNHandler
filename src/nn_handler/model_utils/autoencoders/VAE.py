@@ -101,6 +101,7 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = nn.Conv2d(2 * config['z_channels'], 2 * config['z_channels'], 1)
         self.post_quant_conv = nn.Conv2d(config['z_channels'], config['z_channels'], 1)
 
+    @torch.autocast("cuda", torch.float16)
     def encode(self, x: torch.Tensor) -> DiagonalGaussianDistribution:
         """
         Encodes the input tensor into a diagonal Gaussian distribution. The function processes the
@@ -118,6 +119,7 @@ class AutoencoderKL(nn.Module):
         moments = self.quant_conv(moments)
         return DiagonalGaussianDistribution(moments)
 
+    @torch.autocast("cuda", torch.float16)
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """
         Decodes the input latent tensor using the post-quantization convolution layer
@@ -132,6 +134,7 @@ class AutoencoderKL(nn.Module):
         z = self.post_quant_conv(z)
         return self.decoder(z)
 
+    @torch.autocast("cuda", torch.float16)
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, DiagonalGaussianDistribution]:
         """
         Processes input data through encoding and decoding to produce a reconstruction
