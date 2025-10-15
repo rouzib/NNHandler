@@ -135,25 +135,21 @@ class AutoencoderKL(nn.Module):
         return self.decoder(z)
 
     @torch.autocast("cuda", torch.float16)
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, DiagonalGaussianDistribution]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Processes input data through encoding and decoding to produce a reconstruction
-        and the posterior distribution. This function performs the forward pass in the model,
-        including sampling from the posterior distribution. It combines encoding, sampling,
-        and decoding operations.
+        Forwards the input tensor through the model, performing encoding, sampling, and
+        decoding steps. Returns the reconstructed output and the KL divergence from
+        the prior.
 
-        Args:
-            x: Input tensor representing the data to process.
-
-        Returns:
-            A tuple containing:
-            - The reconstructed output tensor based on the input data.
-            - The posterior distribution in the form of a DiagonalGaussianDistribution.
+        :param x: Input tensor to be processed by the model.
+        :type x: torch.Tensor
+        :returns: A tuple containing the reconstructed tensor and the KL divergence.
+        :rtype: Tuple[torch.Tensor, torch.Tensor]
         """
         posterior = self.encode(x)
         z = posterior.sample()
         reconstruction = self.decode(z)
-        return reconstruction, posterior
+        return reconstruction, posterior.kl()
 
 
 def vae_loss(outputs, targets, epoch, **kwargs):
@@ -178,9 +174,9 @@ def vae_loss(outputs, targets, epoch, **kwargs):
     loss_type = kwargs.get("loss_type", "mse")
     loss_fn = F.mse_loss if loss_type == "mse" else F.l1_loss
 
-    reconstruction, posterior = outputs
+    reconstruction, posterior_kl = outputs
     recon_loss = loss_fn(reconstruction, targets)
-    kl_loss = posterior.kl().mean()
+    kl_loss = posterior_kl.mean()
     total_loss = recon_loss + beta_schedule * kl_loss
     return total_loss, recon_loss, kl_loss
 
