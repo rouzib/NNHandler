@@ -172,8 +172,11 @@ def vae_loss(outputs, targets, epoch, **kwargs):
                                           n_epochs=kwargs.get("n_epochs", 1000),
                                           mode=kwargs.get("beta_schedule", "linear"))
 
+    loss_type = kwargs.get("loss_type", "mse")
+    loss_fn = F.mse_loss if loss_type == "mse" else F.l1_loss
+
     reconstruction, posterior = outputs
-    recon_loss = F.mse_loss(reconstruction, targets)
+    recon_loss = loss_fn(reconstruction, targets)
     kl_loss = posterior.kl().mean()
     total_loss = recon_loss + beta_schedule * kl_loss
     return total_loss, recon_loss, kl_loss
