@@ -37,7 +37,7 @@ class Encoder(nn.Module):
         if len(attention_layers) != len(channel_multipliers):
             raise ValueError("Length of attention_layers must match length of channel_multipliers")
 
-        self.use_checkpointing = use_checkpointing
+        self.use_checkpointing = use_checkpointing  # Store the checkpointing flag
         self.conv_in = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1)
 
         ch = base_channels
@@ -52,22 +52,14 @@ class Encoder(nn.Module):
             if attention_layers[i]:
                 block_group.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
 
-            downsample_layer = None
             if i != len(channel_multipliers) - 1:
-                downsample_layer = Downsample(ch)
-
-            self.down_blocks.append(nn.ModuleDict({
-                'block_group': block_group,
-                'downsample': downsample_layer
-            }))
+                block_group.append(Downsample(ch))
+            self.down_blocks.append(block_group)
 
         self.bottleneck = nn.Sequential(
             ResNetBlock(ch, ch, num_groups=num_groups),
             AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups),
-            ResNetBlock(ch, ch, num_groups=num_groups)
-        )
-
-        self.final_conv = nn.Sequential(
+            ResNetBlock(ch, ch, num_groups=num_groups),
             nn.GroupNorm(num_groups, ch),
             nn.SiLU(),
             nn.Conv2d(ch, 2 * z_channels, kernel_size=3, stride=1, padding=1)
@@ -75,25 +67,25 @@ class Encoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         h = self.conv_in(x)
-
-        for stage in self.down_blocks:
-            for block in stage['block_group']:
-                # Conditional Gradient Checkpointing
+        for block_group in self.down_blocks:
+            for block in block_group:
+                # --- Conditional Checkpointing ---
                 if self.use_checkpointing and self.training:
                     h = checkpoint(block, h, use_reentrant=False)
                 else:
                     h = block(h)
 
-            if stage['downsample'] is not None:
-                h = stage['downsample'](h)
+        # The bottleneck in the original working code was a single Sequential module.
+        # We can't checkpoint the whole thing, but we can checkpoint its internal blocks if we iterate.
+        # However, to minimize changes, let's checkpoint the whole bottleneck if needed.
+        # A better way is to iterate, but this is safer to avoid bugs.
+        if self.use_checkpointing and self.training:
+            # Note: Checkpointing a full Sequential can have issues if blocks aren't pure functions.
+            # Iterating is better, but let's try this simpler approach first.
+            h = checkpoint(self.bottleneck, h, use_reentrant=False)
+        else:
+            h = self.bottleneck(h)
 
-        for block in self.bottleneck:
-            if self.use_checkpointing and self.training:
-                h = checkpoint(block, h, use_reentrant=False)
-            else:
-                h = block(h)
-
-        h = self.final_conv(h)
         return h
 
 
@@ -126,11 +118,10 @@ class Decoder(nn.Module):
         if len(attention_layers) != len(channel_multipliers):
             raise ValueError("Length of attention_layers must match length of channel_multipliers")
 
-        self.use_checkpointing = use_checkpointing
+        self.use_checkpointing = use_checkpointing  # Store the checkpointing flag
         ch = base_channels * channel_multipliers[-1]
 
         self.conv_in = nn.Conv2d(z_channels, ch, kernel_size=3, stride=1, padding=1)
-
         self.bottleneck = nn.Sequential(
             ResNetBlock(ch, ch, num_groups=num_groups),
             AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups),
@@ -138,7 +129,6 @@ class Decoder(nn.Module):
         )
 
         self.up_blocks = nn.ModuleList()
-        # Reversed loop for building the decoder stages
         for i, mult in reversed(list(enumerate(channel_multipliers))):
             block_group = nn.ModuleList()
             out_ch = base_channels * mult
@@ -149,15 +139,9 @@ class Decoder(nn.Module):
             if attention_layers[i]:
                 block_group.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
 
-            upsample_layer = None
             if i != 0:
-                upsample_layer = Upsample(ch)
-
-            # Prepend to keep the order correct for the forward pass
-            self.up_blocks.insert(0, nn.ModuleDict({
-                'block_group': block_group,
-                'upsample': upsample_layer
-            }))
+                block_group.append(Upsample(ch))
+            self.up_blocks.append(block_group)
 
         self.conv_out = nn.Sequential(
             nn.GroupNorm(num_groups, ch),
@@ -168,21 +152,19 @@ class Decoder(nn.Module):
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         h = self.conv_in(z)
 
-        for block in self.bottleneck:
-            if self.use_checkpointing and self.training:
-                h = checkpoint(block, h, use_reentrant=False)
-            else:
-                h = block(h)
+        # Similar to the Encoder, apply checkpointing to the bottleneck
+        if self.use_checkpointing and self.training:
+            h = checkpoint(self.bottleneck, h, use_reentrant=False)
+        else:
+            h = self.bottleneck(h)
 
-        for stage in self.up_blocks:
-            for block in stage['block_group']:
+        for block_group in self.up_blocks:
+            for block in block_group:
+                # --- Conditional Checkpointing ---
                 if self.use_checkpointing and self.training:
                     h = checkpoint(block, h, use_reentrant=False)
                 else:
                     h = block(h)
-
-            if stage['upsample'] is not None:
-                h = stage['upsample'](h)
 
         h = self.conv_out(h)
         return h
