@@ -67,7 +67,8 @@ class AutoencoderKL(nn.Module):
         super().__init__()
 
         num_groups = config.get("num_groups", 32)
-        num_heads = config.get("num_heads", 8)
+        num_heads = config.get("num_heads", 1)
+        use_checkpointing = config.get("use_checkpointing", False)
 
         # Get attention_layers; if not provided, create a default
         attention_layers = config.get("attention_layers")
@@ -84,7 +85,8 @@ class AutoencoderKL(nn.Module):
             "z_channels": config["z_channels"],
             "num_groups": num_groups,
             "num_heads": num_heads,
-            "attention_layers": attention_layers
+            "attention_layers": attention_layers,
+            "use_checkpointing": use_checkpointing
         }
 
         decoder_config = {
@@ -95,7 +97,8 @@ class AutoencoderKL(nn.Module):
             "z_channels": config["z_channels"],
             "num_groups": num_groups,
             "num_heads": num_heads,
-            "attention_layers": attention_layers
+            "attention_layers": attention_layers,
+            "use_checkpointing": use_checkpointing
         }
 
         self.encoder = Encoder(**encoder_config)

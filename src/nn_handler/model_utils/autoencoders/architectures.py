@@ -2,6 +2,7 @@ from typing import List
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from .blocks import AttentionBlock, ResNetBlock, Downsample, Upsample
 
@@ -29,46 +30,71 @@ class Encoder(nn.Module):
     """
 
     def __init__(self, in_channels: int, base_channels: int, channel_multipliers: List[int], num_res_blocks: int,
-                 z_channels: int, num_groups: int, num_heads: int, attention_layers: List[bool]):
+                 z_channels: int, num_groups: int, num_heads: int, attention_layers: List[bool],
+                 use_checkpointing: bool):
         super().__init__()
 
         if len(attention_layers) != len(channel_multipliers):
             raise ValueError("Length of attention_layers must match length of channel_multipliers")
 
+        self.use_checkpointing = use_checkpointing
         self.conv_in = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1)
 
         ch = base_channels
         self.down_blocks = nn.ModuleList()
         for i, mult in enumerate(channel_multipliers):
-            block = nn.ModuleList()
+            block_group = nn.ModuleList()
             out_ch = base_channels * mult
             for _ in range(num_res_blocks):
-                block.append(ResNetBlock(ch, out_ch, num_groups=num_groups))
+                block_group.append(ResNetBlock(ch, out_ch, num_groups=num_groups))
                 ch = out_ch
 
-            # Use the attention_layers list to decide whether to add attention
             if attention_layers[i]:
-                block.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
+                block_group.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
 
+            downsample_layer = None
             if i != len(channel_multipliers) - 1:
-                block.append(Downsample(ch))
-            self.down_blocks.append(block)
+                downsample_layer = Downsample(ch)
+
+            self.down_blocks.append(nn.ModuleDict({
+                'block_group': block_group,
+                'downsample': downsample_layer
+            }))
 
         self.bottleneck = nn.Sequential(
             ResNetBlock(ch, ch, num_groups=num_groups),
             AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups),
-            ResNetBlock(ch, ch, num_groups=num_groups),
+            ResNetBlock(ch, ch, num_groups=num_groups)
+        )
+
+        self.final_conv = nn.Sequential(
             nn.GroupNorm(num_groups, ch),
             nn.SiLU(),
             nn.Conv2d(ch, 2 * z_channels, kernel_size=3, stride=1, padding=1)
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv_in(x)
-        for block_group in self.down_blocks:
-            for block in block_group:
-                x = block(x)
-        return self.bottleneck(x)
+        h = self.conv_in(x)
+
+        for stage in self.down_blocks:
+            for block in stage['block_group']:
+                # Conditional Gradient Checkpointing
+                if self.use_checkpointing and self.training:
+                    h = checkpoint(block, h, use_reentrant=False)
+                else:
+                    h = block(h)
+
+            if stage['downsample'] is not None:
+                h = stage['downsample'](h)
+
+        for block in self.bottleneck:
+            if self.use_checkpointing and self.training:
+                h = checkpoint(block, h, use_reentrant=False)
+            else:
+                h = block(h)
+
+        h = self.final_conv(h)
+        return h
 
 
 class Decoder(nn.Module):
@@ -93,15 +119,18 @@ class Decoder(nn.Module):
     """
 
     def __init__(self, out_channels: int, base_channels: int, channel_multipliers: List[int], num_res_blocks: int,
-                 z_channels: int, num_groups: int, num_heads: int, attention_layers: List[bool]):
+                 z_channels: int, num_groups: int, num_heads: int, attention_layers: List[bool],
+                 use_checkpointing: bool):
         super().__init__()
 
         if len(attention_layers) != len(channel_multipliers):
             raise ValueError("Length of attention_layers must match length of channel_multipliers")
 
+        self.use_checkpointing = use_checkpointing
         ch = base_channels * channel_multipliers[-1]
 
         self.conv_in = nn.Conv2d(z_channels, ch, kernel_size=3, stride=1, padding=1)
+
         self.bottleneck = nn.Sequential(
             ResNetBlock(ch, ch, num_groups=num_groups),
             AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups),
@@ -109,20 +138,26 @@ class Decoder(nn.Module):
         )
 
         self.up_blocks = nn.ModuleList()
+        # Reversed loop for building the decoder stages
         for i, mult in reversed(list(enumerate(channel_multipliers))):
-            block = nn.ModuleList()
+            block_group = nn.ModuleList()
             out_ch = base_channels * mult
             for _ in range(num_res_blocks + 1):
-                block.append(ResNetBlock(ch, out_ch, num_groups=num_groups))
+                block_group.append(ResNetBlock(ch, out_ch, num_groups=num_groups))
                 ch = out_ch
 
-            # Use the attention_layers list to decide whether to add attention
             if attention_layers[i]:
-                block.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
+                block_group.append(AttentionBlock(ch, num_heads=num_heads, num_groups=num_groups))
 
+            upsample_layer = None
             if i != 0:
-                block.append(Upsample(ch))
-            self.up_blocks.append(block)
+                upsample_layer = Upsample(ch)
+
+            # Prepend to keep the order correct for the forward pass
+            self.up_blocks.insert(0, nn.ModuleDict({
+                'block_group': block_group,
+                'upsample': upsample_layer
+            }))
 
         self.conv_out = nn.Sequential(
             nn.GroupNorm(num_groups, ch),
@@ -131,9 +166,23 @@ class Decoder(nn.Module):
         )
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        z = self.conv_in(z)
-        z = self.bottleneck(z)
-        for block_group in self.up_blocks:
-            for block in block_group:
-                z = block(z)
-        return self.conv_out(z)
+        h = self.conv_in(z)
+
+        for block in self.bottleneck:
+            if self.use_checkpointing and self.training:
+                h = checkpoint(block, h, use_reentrant=False)
+            else:
+                h = block(h)
+
+        for stage in self.up_blocks:
+            for block in stage['block_group']:
+                if self.use_checkpointing and self.training:
+                    h = checkpoint(block, h, use_reentrant=False)
+                else:
+                    h = block(h)
+
+            if stage['upsample'] is not None:
+                h = stage['upsample'](h)
+
+        h = self.conv_out(h)
+        return h
