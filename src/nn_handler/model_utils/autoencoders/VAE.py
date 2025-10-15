@@ -26,6 +26,7 @@ class DiagonalGaussianDistribution:
             computed as the exponential of half the log variance.
     """
 
+    @torch.autocast("cuda", torch.float32)
     def __init__(self, parameters: torch.Tensor):
         self.mean, self.logvar = torch.chunk(parameters, 2, dim=1)
         self.logvar = torch.clamp(self.logvar, -30.0, 20.0)
@@ -34,6 +35,7 @@ class DiagonalGaussianDistribution:
     def sample(self) -> torch.Tensor:
         return self.mean + self.std * torch.randn_like(self.std)
 
+    @torch.autocast("cuda", torch.float32)
     def kl(self) -> torch.Tensor:
         return 0.5 * torch.sum(
             torch.pow(self.mean, 2) + torch.exp(self.logvar) - 1.0 - self.logvar,
@@ -101,7 +103,7 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = nn.Conv2d(2 * config['z_channels'], 2 * config['z_channels'], 1)
         self.post_quant_conv = nn.Conv2d(config['z_channels'], config['z_channels'], 1)
 
-    # @torch.autocast("cuda", torch.float16)
+    @torch.autocast("cuda", torch.float16)
     def encode(self, x: torch.Tensor) -> DiagonalGaussianDistribution:
         """
         Encodes the input tensor into a diagonal Gaussian distribution. The function processes the
@@ -119,7 +121,7 @@ class AutoencoderKL(nn.Module):
         moments = self.quant_conv(moments)
         return DiagonalGaussianDistribution(moments)
 
-    # @torch.autocast("cuda", torch.float16)
+    @torch.autocast("cuda", torch.float16)
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """
         Decodes the input latent tensor using the post-quantization convolution layer
@@ -134,7 +136,7 @@ class AutoencoderKL(nn.Module):
         z = self.post_quant_conv(z)
         return self.decoder(z)
 
-    # @torch.autocast("cuda", torch.float16)
+    @torch.autocast("cuda", torch.float16)
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forwards the input tensor through the model, performing encoding, sampling, and
