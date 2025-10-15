@@ -368,6 +368,8 @@ class NNHandler:
             # Wrap with DDP
             # Determine find_unused_parameters based on environment variable or default
             ddp_find_unused = os.environ.get("DDP_FIND_UNUSED_PARAMETERS", "false").lower() == "true"
+            if "find_unused_parameters" in ddp_kwargs.keys():
+                ddp_find_unused = ddp_kwargs.pop("find_unused_parameters")
             if self._device.type == 'cuda':
                 # Ensure device_ids is a list containing the local rank
                 self._model = DDP(base_model, device_ids=[self._local_rank], output_device=self._local_rank,
