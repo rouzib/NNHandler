@@ -1,7 +1,7 @@
 import abc
 import os
 import warnings
-from typing import Optional, Any, Tuple, Dict
+from typing import Optional, Any, Tuple, Dict, Callable
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,6 +15,13 @@ try:
 except ImportError:
     _matplotlib_available = False
 
+try:
+    from IPython.core.display_functions import clear_output, display
+
+    _ipython_available = True
+except ImportError:
+    _ipython_available = False
+
 
 class BasePredictionVisualizer(Callback):
     """Base class for callbacks that visualize model predictions periodically.
@@ -27,18 +34,23 @@ class BasePredictionVisualizer(Callback):
                                  Must be provided if `use_fixed_batch` is False.
         log_freq_epoch (int): Visualize predictions every N epochs. Defaults to 5.
         num_samples (int): Number of samples to visualize in the batch. Defaults to 8.
-        save_dir (str): Directory to save the visualizations. Defaults to "./viz_predictions".
+        save_dir (str): Directory to save the visualizations. Defaults to None (no saving).
         use_fixed_batch (bool): If True, uses the same batch every time. Requires `fixed_batch` to be set.
         fixed_batch (Optional[Any]): A specific batch of data (input, Optional[target]) to use for visualization if `use_fixed_batch` is True.
     """
 
+    @staticmethod
+    def default_prediction_fn(model, model_inputs, **additional_params):
+        return model(model_inputs, **additional_params)
+
     def __init__(self,
                  log_freq_epoch: int = 5,
                  num_samples: int = 8,
-                 save_dir: str = "./viz_predictions",
+                 save_dir: str = None,
                  val_loader: Optional[DataLoader] = None,
                  use_fixed_batch: bool = False,
-                 fixed_batch: Optional[Any] = None):
+                 fixed_batch: Optional[Any] = None,
+                 get_predictions_fn: Optional[Callable] = None, ):
         super().__init__()
         self.log_freq_epoch = log_freq_epoch
         self.num_samples = num_samples
@@ -46,6 +58,7 @@ class BasePredictionVisualizer(Callback):
         self.val_loader = val_loader
         self.use_fixed_batch = use_fixed_batch
         self._fixed_batch_prepared: Optional[Any] = None
+        self.get_predictions_fn = get_predictions_fn
 
         if use_fixed_batch:
             if fixed_batch is None:
@@ -54,7 +67,11 @@ class BasePredictionVisualizer(Callback):
         elif val_loader is None:
             raise ValueError("`val_loader` must be provided if `use_fixed_batch` is False.")
 
-        os.makedirs(self.save_dir, exist_ok=True)
+        if self.get_predictions_fn is None:
+            self.get_predictions_fn = self.default_prediction_fn
+
+        if self.save_dir:
+            os.makedirs(self.save_dir, exist_ok=True)
 
     def _get_visualization_batch(self) -> Optional[Tuple[Any, Any, Any]]:
         """Gets a batch suitable for visualization."""
@@ -64,12 +81,16 @@ class BasePredictionVisualizer(Callback):
         additional_params = {}
         if self.use_fixed_batch:
             # Prepare the fixed batch if not already done (move to device)
-            if isinstance(self._fixed_batch_prepared, tuple):  # Assume (input, target)
+            if isinstance(self._fixed_batch_prepared, tuple) and len(
+                    self._fixed_batch_prepared) >= 2:  # Assume (input, target)
                 inputs = self._fixed_batch_prepared[0][:self.num_samples].to(self.handler.device)
                 targets = self._fixed_batch_prepared[1][:self.num_samples].to(self.handler.device)
                 batch_data = (inputs, targets)
             else:  # Assume input only
-                inputs = self._fixed_batch_prepared[:self.num_samples].to(self.handler.device)
+                if isinstance(self._fixed_batch_prepared, tuple):
+                    inputs = self._fixed_batch_prepared[0][:self.num_samples].to(self.handler.device)
+                else:
+                    inputs = self._fixed_batch_prepared[:self.num_samples].to(self.handler.device)
                 batch_data = (inputs, None)
         elif self.val_loader:
             try:
@@ -100,7 +121,7 @@ class BasePredictionVisualizer(Callback):
             # Apply EMA context if handler uses it? Maybe add flag? For simplicity, don't apply EMA here.
             # Use handler's __call__ which uses the *current* model state (could be EMA or not)
             model_inputs = batch_data[0]
-            predictions = self.handler(model_inputs, **additional_params)
+            predictions = self.get_predictions_fn(self.handler, model_inputs, **additional_params)
 
         return batch_data[0], batch_data[1], predictions  # inputs, targets, predictions
 
@@ -116,9 +137,10 @@ class BasePredictionVisualizer(Callback):
             if batch_info:
                 inputs, targets, predictions = batch_info
                 try:
-                    self._visualize_batch(inputs.cpu(),
-                                          targets.cpu() if targets is not None else None,
-                                          predictions.cpu() if isinstance(predictions, torch.Tensor) else predictions,
+                    self._visualize_batch(inputs.cpu().to(torch.float32),
+                                          targets.cpu().to(torch.float32) if targets is not None else None,
+                                          predictions.cpu().to(torch.float32) if isinstance(predictions,
+                                                                                            torch.Tensor) else predictions,
                                           # Move tensors to CPU
                                           current_epoch_1_based)
                 except Exception as e:
@@ -137,17 +159,25 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
     (e.g., B, C, H, W) that can be plotted with matplotlib.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, show=False, clear_cell=False, vertical=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not _matplotlib_available:
             raise ImportError("ImagePredictionVisualizer requires 'matplotlib'. Install with 'pip install matplotlib'")
+        self.show = show
+        self.clear_cell = clear_cell
+        if not _ipython_available:
+            raise ImportError("clear_cell=True requires 'IPython'. Install with 'pip install ipython'")
+        self.vertical = vertical
 
     def _visualize_batch(self, inputs: torch.Tensor, targets: Optional[torch.Tensor], predictions: torch.Tensor,
                          epoch: int):
         # Determine grid size
         num_cols = 3 if targets is not None else 2  # Input, Target, Pred | Input, Pred
         num_rows = self.num_samples
-        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3, num_rows * 3))
+        if self.vertical:
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3, num_rows * 3))
+        else:
+            fig, axes = plt.subplots(num_cols, num_rows, figsize=(num_rows * 3, num_cols * 3))
         fig.suptitle(f"Predictions - Epoch {epoch}", fontsize=16)
 
         # Ensure axes is always a 2D array for consistent indexing
@@ -158,6 +188,9 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
         elif num_cols == 1:
             axes = [[ax] for ax in axes]
 
+        if not self.vertical:
+            axes = axes.T
+
         for i in range(self.num_samples):
             # Handle case where batch size might be smaller than num_samples
             if i >= inputs.shape[0]: break
@@ -165,11 +198,20 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             img_in = inputs[i].permute(1, 2, 0).squeeze()  # H, W, C or H, W
             img_pred = predictions[i].permute(1, 2, 0).squeeze()
 
+            use_colorbar_in = False
+            use_colorbar_pred = False
+            if img_in.ndim == 2:
+                use_colorbar_in = True
+            if img_pred.ndim == 2:
+                use_colorbar_pred = True
+
             # --- Plot Input ---
             ax = axes[i][0]
             ax.imshow(img_in.numpy(), cmap='gray')  # Assuming grayscale or RGB suitable for imshow
             ax.set_title(f"Input {i}")
             ax.axis('off')
+            if use_colorbar_in:
+                fig.colorbar(ax.get_children()[0], ax=ax)
 
             # --- Plot Target (if available) ---
             if targets is not None and i < targets.shape[0]:
@@ -178,15 +220,26 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
                 ax.imshow(img_target.numpy(), cmap='gray')
                 ax.set_title(f"Target {i}")
                 ax.axis('off')
+                if img_target.ndim == 2:
+                    fig.colorbar(ax.get_children()[0], ax=ax)
 
             # --- Plot Prediction ---
             ax = axes[i][num_cols - 1]  # Last column is prediction
             ax.imshow(img_pred.numpy(), cmap='gray')
             ax.set_title(f"Prediction {i}")
             ax.axis('off')
+            if use_colorbar_pred:
+                fig.colorbar(ax.get_children()[0], ax=ax)
 
         plt.tight_layout(rect=(0, 0.03, 1, 0.95))  # Adjust layout to prevent title overlap
-        save_name = os.path.join(self.save_dir, f"epoch_{epoch:04d}_predictions.png")
-        plt.savefig(save_name)
-        plt.close(fig)  # Close the figure to free memory
-        print(f"Saved prediction visualization to {save_name}")
+        if self.clear_cell:
+            clear_output(wait=True)
+            display(plt.gcf())
+        if self.show:
+            plt.show(block=False)
+        if self.save_dir:
+            save_name = os.path.join(self.save_dir, f"epoch_{epoch:04d}_predictions.png")
+            plt.savefig(save_name)
+            print(f"Saved prediction visualization to {save_name}")
+
+        plt.close(fig)
