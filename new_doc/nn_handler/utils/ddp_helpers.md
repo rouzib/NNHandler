@@ -1,6 +1,6 @@
 # Distributed Data Helpers
 
-The `dd_helpers` module provides utility functions for working with distributed data parallel (DDP) operations in PyTorch. These functions simplify common tasks like metric aggregation, loss reduction, data broadcasting, and creating distributed data loaders.
+The `ddp_helpers` module provides utility functions for working with distributed data parallel (DDP) operations in PyTorch. These functions simplify common tasks like metric aggregation, loss reduction, data broadcasting, and creating distributed data loaders.
 
 ## Overview
 
@@ -32,7 +32,7 @@ Aggregates a dictionary of metrics across all processes in a distributed environ
 **Example:**
 ```python
 import torch.distributed as dist
-from src.nn_handler.utils.dd_helpers import aggregate_metrics
+from src.nn_handler.utils.ddp_helpers import aggregate_metrics
 
 # Calculate metrics on each process
 local_metrics = {
@@ -63,7 +63,7 @@ Aggregates a loss value across all processes in a distributed environment.
 **Example:**
 ```python
 import torch.distributed as dist
-from src.nn_handler.utils.dd_helpers import aggregate_loss
+from src.nn_handler.utils.ddp_helpers import aggregate_loss
 
 # Calculate loss on each process
 local_loss = model_loss.item()  # e.g., 0.342
@@ -103,7 +103,7 @@ Conditionally broadcasts data if DDP is initialized, otherwise returns the data 
 **Example:**
 ```python
 import torch.distributed as dist
-from src.nn_handler.utils.dd_helpers import broadcast_if_ddp
+from src.nn_handler.utils.ddp_helpers import broadcast_if_ddp
 
 # Only rank 0 loads the configuration
 config = None

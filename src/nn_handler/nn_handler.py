@@ -26,7 +26,7 @@ from .utils import ExponentialMovingAverage, GradScaler, _amp_available, _ema_av
 from .utils.enums import ModelType, LoggingMode, DataLoaderType
 from .utils.ddp_init import _resolve_device, _should_use_distributed, _initialize_distributed
 from .utils.ddp_decorators import on_rank
-from .utils.dd_helpers import _create_distributed_loader, broadcast_if_ddp, _create_rank_cached_dataloader
+from .utils.ddp_helpers import _create_distributed_loader, broadcast_if_ddp, _create_rank_cached_dataloader
 from .trainer.trainer import train
 
 

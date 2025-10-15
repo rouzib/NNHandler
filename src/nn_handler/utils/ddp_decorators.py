@@ -9,7 +9,7 @@ import torch.multiprocessing as mp
 from torch import nn
 import cloudpickle as _cp
 
-from .dd_helpers import _collective_device_for_backend
+from .ddp_helpers import _collective_device_for_backend
 
 
 def on_rank(rank: Union[int, List[int]], barrier: bool = False, check_exception: bool = False):
