@@ -73,6 +73,7 @@ class NNHandler:
     _grad_scaler: GradScaler = None
     _modules_always_eval: List[nn.Module] = []
     _complimentary_kwargs: Dict[str, Any] = {}
+    _ddp_kwargs: Dict[str, Any] = {}
 
     # --- DDP Specific Attributes ---
     _distributed: bool = False
@@ -119,6 +120,7 @@ class NNHandler:
                  save_model_code: bool = False,
                  model_type: Union[ModelType, str] = ModelType.CLASSIFICATION,
                  use_distributed: Optional[bool] = None,  # DDP control flag
+                 ddp_kwargs: Optional[dict] = None,
                  **model_kwargs):
         self._setup_distributed(use_distributed, device)
 
@@ -127,6 +129,9 @@ class NNHandler:
 
         self._model_class = model_class
         self._model_kwargs = model_kwargs
+
+        if ddp_kwargs is not None:
+            self._ddp_kwargs = ddp_kwargs
 
         if logger_mode is not None:
             self.__logger = initialize_logger("NNHandler", logger_mode, logger_filename, logger_filemode,
@@ -141,6 +146,7 @@ class NNHandler:
         self.set_model(model_class=self._model_class,
                        save_model_code=save_model_code,
                        model_type=self._model_type,  # Pass resolved type
+                       ddp_kwargs=self._ddp_kwargs,
                        **self._model_kwargs)
 
         msg_lines = [
@@ -155,6 +161,8 @@ class NNHandler:
                 f"  Global Rank:         {self._rank}",
                 f"  Local Rank:          {self._local_rank}"
             ])
+            if ddp_kwargs is not None:
+                msg_lines.append(f"  DDP kwargs: {self._ddp_kwargs}")
         msg_lines.extend([
             f"  Target Device:       {self._device}",
             f"  AMP Available:       {_amp_available}",
@@ -335,10 +343,14 @@ class NNHandler:
         return self._auto_saver.model_code
 
     def set_model(self, model_class: type[nn.Module], save_model_code: bool = False,
-                  model_type: Optional[Union[ModelType, str]] = None, **model_kwargs):
+                  model_type: Optional[Union[ModelType, str]] = None, ddp_kwargs: Optional[Dict] = None,
+                  **model_kwargs):
         """Sets or replaces the model, handling DDP/DataParallel wrapping."""
         if not issubclass(model_class, nn.Module):
             self.raise_error(TypeError, f"model_class must be a subclass of torch.nn.Module, got {model_class}.")
+
+        if ddp_kwargs is None:
+            ddp_kwargs = {}
 
         # Resolve model type
         if model_type is not None:
@@ -359,10 +371,10 @@ class NNHandler:
             if self._device.type == 'cuda':
                 # Ensure device_ids is a list containing the local rank
                 self._model = DDP(base_model, device_ids=[self._local_rank], output_device=self._local_rank,
-                                  find_unused_parameters=ddp_find_unused)
+                                  find_unused_parameters=ddp_find_unused, **ddp_kwargs)
             else:
                 # DDP on CPU doesn't use device_ids or output_device
-                self._model = DDP(base_model, find_unused_parameters=ddp_find_unused)
+                self._model = DDP(base_model, find_unused_parameters=ddp_find_unused, **ddp_kwargs)
 
             # Log DDP wrapping details
             self.log(
@@ -906,6 +918,7 @@ class NNHandler:
             "metrics": self._metrics,  # Caution: pickling metric functions
             "seed": self._seed,
             "complimentary_kwargs": self._complimentary_kwargs,
+            "ddp_kwargs": self._ddp_kwargs,
             # Device is not saved, as it's determined at load time by rank/environment
 
             # Data Loader Kwargs (Dataset itself is not saved)

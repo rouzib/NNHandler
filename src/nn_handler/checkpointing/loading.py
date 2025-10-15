@@ -96,6 +96,7 @@ def load(NNHandler,
     model_class = state.get("model_class")
     model_kwargs = state.get("model_kwargs", {})
     model_type_str = state.get("model_type", ModelType.CLASSIFICATION.value)  # Get string value
+    ddp_kwargs = state.get("ddp_kwargs", {})
     try:
         # Convert saved string back to enum member
         model_type = ModelType(model_type_str)
@@ -121,6 +122,7 @@ def load(NNHandler,
                         model_type=model_type,
                         # Determine DDP status based on current env, not checkpoint state
                         use_distributed=is_distributed_load,
+                        ddp_kwargs=ddp_kwargs,
                         **model_kwargs)
     # handler._model is now initialized and potentially DDP-wrapped
 
