@@ -50,6 +50,7 @@ setup(
         "numpy",
         "matplotlib",
         "tqdm",
-        "torch_ema>=0.3"
+        "torch_ema>=0.3",
+        "einops"
     ],
 )

@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import einops
 
 
 class ResNetBlock(nn.Module):
@@ -57,46 +58,89 @@ class ResNetBlock(nn.Module):
         return self.nin_shortcut(x) + h
 
 
+# class AttentionBlock(nn.Module):
+#     """
+#     Implements a multi-head attention mechanism using torch.nn.MultiheadAttention.
+#
+#     This block reshapes the input tensor from (B, C, H, W) to the sequence format
+#     expected by MultiheadAttention, performs self-attention, and then reshapes it
+#     back. This allows capturing long-range dependencies across spatial dimensions.
+#
+#     Attributes:
+#         norm (nn.GroupNorm): Group normalization layer applied to the input.
+#         attn (nn.MultiheadAttention): The core multi-head attention layer from PyTorch.
+#     """
+#
+#     def __init__(self, channels: int, num_heads: int = 8, num_groups: int = 32):
+#         super().__init__()
+#         self.norm = nn.GroupNorm(num_groups, channels)
+#         # Ensure channel dimension is divisible by num_heads
+#         if channels % num_heads != 0:
+#             raise ValueError(f"channels ({channels}) must be divisible by num_heads ({num_heads})")
+#
+#         self.attn = nn.MultiheadAttention(
+#             embed_dim=channels,
+#             num_heads=num_heads,
+#             batch_first=False  # Expects (SeqLen, Batch, EmbedDim)
+#         )
+#
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         b, c, h, w = x.shape
+#
+#         # Normalize and reshape for attention
+#         h_ = self.norm(x)
+#         h_ = h_.reshape(b, c, h * w).permute(2, 0, 1)  # (H*W, B, C)
+#
+#         # Apply self-attention
+#         attn_output, _ = self.attn(h_, h_, h_)
+#
+#         # Reshape back to image format and add residual connection
+#         attn_output = attn_output.permute(1, 2, 0).reshape(b, c, h, w)
+#
+#         return x + attn_output
+
+
 class AttentionBlock(nn.Module):
     """
-    Implements a multi-head attention mechanism using torch.nn.MultiheadAttention.
+    Defines an AttentionBlock for self-attention in neural networks.
 
-    This block reshapes the input tensor from (B, C, H, W) to the sequence format
-    expected by MultiheadAttention, performs self-attention, and then reshapes it
-    back. This allows capturing long-range dependencies across spatial dimensions.
-
-    Attributes:
-        norm (nn.GroupNorm): Group normalization layer applied to the input.
-        attn (nn.MultiheadAttention): The core multi-head attention layer from PyTorch.
+    This class implements a self-attention mechanism with support for
+    multi-head attention. It normalizes input feature maps using group normalization
+    and computes the attention scores using learnable query, key, and value projections.
+    The attention mechanism is scaled using the dot product attention function and
+    can process inputs with multi-heads for better representation learning. It is especially
+    useful in scenarios requiring spatial or channel-wise attention.
     """
-
-    def __init__(self, channels: int, num_heads: int = 8, num_groups: int = 32):
+    def __init__(self, channels: int, num_heads: int = 1, num_groups: int = 32):
         super().__init__()
         self.norm = nn.GroupNorm(num_groups, channels)
-        # Ensure channel dimension is divisible by num_heads
-        if channels % num_heads != 0:
-            raise ValueError(f"channels ({channels}) must be divisible by num_heads ({num_heads})")
-
-        self.attn = nn.MultiheadAttention(
-            embed_dim=channels,
-            num_heads=num_heads,
-            batch_first=False  # Expects (SeqLen, Batch, EmbedDim)
-        )
+        self.q = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
+        self.k = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
+        self.v = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
+        self.proj_out = nn.Conv2d(channels, channels, kernel_size=1, stride=1, padding=0)
+        self.num_heads = num_heads
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.shape
-
-        # Normalize and reshape for attention
         h_ = self.norm(x)
-        h_ = h_.reshape(b, c, h * w).permute(2, 0, 1)  # (H*W, B, C)
+        q, k, v = self.q(h_), self.k(h_), self.v(h_)
 
-        # Apply self-attention
-        attn_output, _ = self.attn(h_, h_, h_)
+        b, c, h, w = q.shape
+        q, k, v = map(
+            lambda t: einops.rearrange(t, "b c h w -> b (h w) c"), (q, k, v)
+        )
 
-        # Reshape back to image format and add residual connection
-        attn_output = attn_output.permute(1, 2, 0).reshape(b, c, h, w)
+        # Use num_heads by reshaping the channel dimension
+        q = einops.rearrange(q, "b l (h d) -> (b h) l d", h=self.num_heads)
+        k = einops.rearrange(k, "b l (h d) -> (b h) l d", h=self.num_heads)
+        v = einops.rearrange(v, "b l (h d) -> (b h) l d", h=self.num_heads)
 
-        return x + attn_output
+        h_ = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+
+        h_ = einops.rearrange(h_, "(b h) l d -> b l (h d)", h=self.num_heads)
+        h_ = einops.rearrange(h_, "b (h w) c -> b c h w", h=h, w=w)
+
+        h_ = self.proj_out(h_)
+        return x + h_
 
 
 class Downsample(nn.Module):

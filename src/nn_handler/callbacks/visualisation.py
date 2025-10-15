@@ -161,7 +161,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
     (e.g., B, C, H, W) that can be plotted with matplotlib.
     """
 
-    def __init__(self, show=False, clear_cell=False, vertical=False, *args, **kwargs):
+    def __init__(self, show=False, clear_cell=False, vertical=False, log_scale=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not _matplotlib_available:
             raise ImportError("ImagePredictionVisualizer requires 'matplotlib'. Install with 'pip install matplotlib'")
@@ -170,6 +170,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
         if not _ipython_available:
             raise ImportError("clear_cell=True requires 'IPython'. Install with 'pip install ipython'")
         self.vertical = vertical
+        self.log_scale = log_scale
 
     def _visualize_batch(self, inputs: torch.Tensor, targets: Optional[torch.Tensor], predictions: torch.Tensor,
                          epoch: int):
@@ -200,6 +201,10 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             img_in = inputs[i].permute(1, 2, 0).squeeze()  # H, W, C or H, W
             img_pred = predictions[i].permute(1, 2, 0).squeeze()
 
+            if self.log_scale:
+                img_in = torch.log(img_in)
+                img_pred = torch.log(img_pred)
+
             use_colorbar_in = False
             use_colorbar_pred = False
             if img_in.ndim == 2:
@@ -218,6 +223,8 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             # --- Plot Target (if available) ---
             if targets is not None and i < targets.shape[0]:
                 img_target = targets[i].permute(1, 2, 0).squeeze()
+                if self.log_scale:
+                    img_target = torch.log(img_target)
                 ax = axes[i][1]
                 ax.imshow(img_target.numpy(), cmap='gray')
                 ax.set_title(f"Target {i}")
