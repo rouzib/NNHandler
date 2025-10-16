@@ -1,8 +1,10 @@
 import torch
 from torch.utils.data import DataLoader, TensorDataset, Dataset
 
+from tqdm.auto import tqdm
 
-def create_latent_dataset(model, dataset, batch_size=128, device=None, return_labels=False):
+
+def create_latent_dataset(model, dataset, batch_size=128, device=None, return_labels=False, pbar=True):
     """
     Runs dataset through the model's encoder to obtain latent vectors.
 
@@ -24,7 +26,7 @@ def create_latent_dataset(model, dataset, batch_size=128, device=None, return_la
     labels = []
 
     with torch.no_grad():
-        for data_tuple in loader:
+        for data_tuple in tqdm(loader, disable=not pbar):
             # Handle datasets yielding (img,) or (img, label)
             if isinstance(data_tuple, (tuple, list)):
                 imgs = data_tuple[0].to(device)
