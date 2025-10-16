@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .base import Callback
+from ..trainer.batch_utils import _prepare_batch
 from ..utils import autocast
 
 try:
@@ -98,7 +99,7 @@ class BasePredictionVisualizer(Callback):
             try:
                 # Get a batch from the validation loader
                 batch_data_raw = next(iter(self.val_loader))
-                batch_data = self.handler._prepare_batch(batch_data_raw)  # Use handler's prep
+                batch_data = _prepare_batch(self.handler, batch_data_raw)  # Use handler's prep
                 # Extract inputs, targets, and additional parameters
                 inputs = batch_data["inputs"]
                 targets = batch_data["targets"]

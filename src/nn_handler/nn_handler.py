@@ -24,7 +24,7 @@ from .model_utils.score_models.sde_solver import SdeSolver
 from .model_utils.sampler import Sampler
 from .utils import ExponentialMovingAverage, GradScaler, _amp_available, _ema_available
 from .utils.enums import ModelType, LoggingMode, DataLoaderType
-from .utils.ddp_init import _resolve_device, _should_use_distributed, _initialize_distributed
+from .utils.ddp_init import _resolve_device, _should_use_distributed, _initialize_distributed, _pick_device
 from .utils.ddp_decorators import on_rank
 from .utils.ddp_helpers import _create_distributed_loader, broadcast_if_ddp, _create_rank_cached_dataloader
 from .trainer.trainer import train
@@ -101,6 +101,14 @@ class NNHandler:
         :return: None
         """
         self._distributed = _should_use_distributed(use_distributed)
+
+        if self._distributed and dist.is_initialized():
+            self._distributed = True
+            self._rank = dist.get_rank()
+            self._local_rank = dist.get_node_local_rank()
+            self._world_size = dist.get_world_size()
+            self._device = _pick_device(self._local_rank)
+
         if self._distributed:
             # Sets self._rank, self._local_rank, self._world_size, self._device
             self._distributed, self._rank, self._local_rank, self._world_size, self._device = _initialize_distributed()
@@ -282,6 +290,18 @@ class NNHandler:
             # Unwrap from DataParallel
             self.log("Device changed or single GPU detected. Unwrapping model from nn.DataParallel.")
             self._model = raw_model  # Assign the unwrapped module back
+
+    def unwrap_model_dataparallel(self):
+        """Unwraps model with nn.DataParallel for non-DDP multi-GPU."""
+        if self._distributed or not self._model:
+            return
+        is_multi_gpu_cuda = self._device.type == 'cuda' and torch.cuda.device_count() > 1
+        # Get the raw underlying model (handles if already wrapped)
+        raw_model = self.module
+        is_already_dp = isinstance(self._model, nn.DataParallel)
+        if is_multi_gpu_cuda and is_already_dp:
+            self.log("Unwrapping model from nn.DataParallel.")
+            self._model = raw_model
 
     @property
     def seed(self) -> Optional[int]:
