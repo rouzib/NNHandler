@@ -108,6 +108,7 @@ class NNHandler:
             self._local_rank = dist.get_node_local_rank()
             self._world_size = dist.get_world_size()
             self._device = _pick_device(self._local_rank)
+            return
 
         if self._distributed:
             # Sets self._rank, self._local_rank, self._world_size, self._device
