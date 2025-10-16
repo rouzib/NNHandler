@@ -821,6 +821,21 @@ class NNHandler:
         self._callbacks.append(callback)
         self.log(f"Added callback: {type(callback).__name__}")
 
+    def remove_callback(self, callback: Callback):
+        """Removes a callback instance from the handler (all ranks)."""
+        if not isinstance(callback, Callback):
+            self.raise_error(TypeError, "callback must be an instance of the Callback base class.")
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+            self.log(f"Removed callback: {type(callback).__name__}")
+        else:
+            self.log(f"Failed to remove callback: {type(callback).__name__}")
+
+    def clear_callbacks(self):
+        """Removes all callbacks from the handler (all ranks)."""
+        self._callbacks.clear()
+        self.log("All callbacks cleared.")
+
     def _run_callbacks(self, method_name: str, *args, **kwargs):
         """Helper to run a specific method on all registered callbacks."""
         # Callbacks are run on all ranks unless they have internal rank checks

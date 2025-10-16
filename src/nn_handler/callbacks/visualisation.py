@@ -2,6 +2,7 @@ import abc
 import os
 import warnings
 from typing import Optional, Any, Tuple, Dict, Callable
+import math
 
 import torch
 from torch.utils.data import DataLoader
@@ -128,7 +129,8 @@ class BasePredictionVisualizer(Callback):
         return batch_data[0], batch_data[1], predictions  # inputs, targets, predictions
 
     @abc.abstractmethod
-    def _visualize_batch(self, inputs: Any, targets: Optional[Any], predictions: Any, epoch: int):
+    def _visualize_batch(self, inputs: Any, targets: Optional[Any], predictions: Any, epoch: int,
+                         logs: Optional[Dict[str, Any]] = None):
         """User-defined method to create and save the visualization."""
         raise NotImplementedError
 
@@ -144,7 +146,8 @@ class BasePredictionVisualizer(Callback):
                                           predictions.cpu().to(torch.float32) if isinstance(predictions,
                                                                                             torch.Tensor) else predictions,
                                           # Move tensors to CPU
-                                          current_epoch_1_based)
+                                          current_epoch_1_based,
+                                          logs)
                 except Exception as e:
                     warnings.warn(f"Failed to visualize predictions at epoch {current_epoch_1_based}: {e}",
                                   RuntimeWarning)
@@ -173,7 +176,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
         self.log_scale = log_scale
 
     def _visualize_batch(self, inputs: torch.Tensor, targets: Optional[torch.Tensor], predictions: torch.Tensor,
-                         epoch: int):
+                         epoch: int, logs: Optional[Dict[str, Any]] = None):
         # Determine grid size
         num_cols = 3 if targets is not None else 2  # Input, Target, Pred | Input, Pred
         num_rows = self.num_samples
@@ -181,7 +184,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3, num_rows * 3))
         else:
             fig, axes = plt.subplots(num_cols, num_rows, figsize=(num_rows * 3, num_cols * 3))
-        fig.suptitle(f"Predictions - Epoch {epoch}", fontsize=16)
+        fig.suptitle(f"Predictions - Epoch {epoch}, loss={logs.get('loss', math.nan):.2e}", fontsize=16)
 
         # Ensure axes is always a 2D array for consistent indexing
         if num_rows == 1 and num_cols == 1:
