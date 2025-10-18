@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from .base import Callback
 from ..trainer.batch_utils import _prepare_batch
-from ..utils import autocast
+from ..utils import autocast, on_rank
 
 try:
     import matplotlib.pyplot as plt
@@ -135,6 +135,7 @@ class BasePredictionVisualizer(Callback):
         """User-defined method to create and save the visualization."""
         raise NotImplementedError
 
+    @on_rank(0, barrier=True)
     def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, Any]] = None):
         current_epoch_1_based = epoch + 1
         if current_epoch_1_based % self.log_freq_epoch == 0:
