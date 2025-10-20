@@ -197,6 +197,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
         elif num_cols == 1:
             axes = np.array([[ax] for ax in axes])
 
+        axes = np.atleast_2d(axes)
         if not self.vertical:
             axes = axes.T
 
