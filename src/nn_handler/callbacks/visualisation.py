@@ -4,6 +4,7 @@ import warnings
 from typing import Optional, Any, Tuple, Dict, Callable
 import math
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -190,11 +191,11 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
 
         # Ensure axes is always a 2D array for consistent indexing
         if num_rows == 1 and num_cols == 1:
-            axes = [[axes]]
+            axes = np.array([[axes]])
         elif num_rows == 1:
-            axes = [axes]
+            axes = np.array([axes])
         elif num_cols == 1:
-            axes = [[ax] for ax in axes]
+            axes = np.array([[ax] for ax in axes])
 
         if not self.vertical:
             axes = axes.T
