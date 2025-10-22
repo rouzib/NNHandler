@@ -167,7 +167,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
     (e.g., B, C, H, W) that can be plotted with matplotlib.
     """
 
-    def __init__(self, show=False, clear_cell=False, vertical=False, log_scale=False, *args, **kwargs):
+    def __init__(self, show=False, clear_cell=False, vertical=False, log_scale=False, dpi=300, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if not _matplotlib_available:
             raise ImportError("ImagePredictionVisualizer requires 'matplotlib'. Install with 'pip install matplotlib'")
@@ -177,6 +177,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             raise ImportError("clear_cell=True requires 'IPython'. Install with 'pip install ipython'")
         self.vertical = vertical
         self.log_scale = log_scale
+        self.dpi = dpi
 
     def _visualize_batch(self, inputs: torch.Tensor, targets: Optional[torch.Tensor], predictions: torch.Tensor,
                          epoch: int, logs: Optional[Dict[str, Any]] = None):
@@ -255,7 +256,7 @@ class ImagePredictionVisualizer(BasePredictionVisualizer):
             plt.show(block=False)
         if self.save_dir:
             save_name = os.path.join(self.save_dir, f"epoch_{epoch:04d}_predictions.png")
-            plt.savefig(save_name)
+            plt.savefig(save_name, dpi=self.dpi)
             print(f"Saved prediction visualization to {save_name}")
 
         plt.close(fig)
