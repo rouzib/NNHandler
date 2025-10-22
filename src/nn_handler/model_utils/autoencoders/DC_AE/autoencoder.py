@@ -22,7 +22,7 @@ class AutoEncoder(nn.Module):
     """
 
     def __init__(self, in_channels: int, lat_channels: int, spatial: int = 2, saturation: str = None,
-                 noise: float = 0.0, encoder_only=None, decoder_only=None, **kwargs: Any):
+                 noise: float = 0.0, encoder_only=None, decoder_only=None, use_fp16=False, **kwargs: Any):
         super().__init__()
 
         if decoder_only is None:
@@ -36,6 +36,7 @@ class AutoEncoder(nn.Module):
                                  **kwargs)
         self.saturation = saturation
         self.noise = noise
+        self.use_fp16 = use_fp16
 
     def saturate(self, x: Tensor) -> Tensor:
         if self.saturation is None:
@@ -54,20 +55,23 @@ class AutoEncoder(nn.Module):
             raise ValueError(f"unknown saturation '{self.saturation}'")
 
     def encode(self, x: Tensor) -> Tensor:
-        z = self.encoder(x)
-        z = self.saturate(z)
-        return z
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16):
+            z = self.encoder(x)
+            z = self.saturate(z)
+            return z
 
     def decode(self, z: Tensor, noisy: bool = True) -> Tensor:
-        if noisy and self.noise > 0:
-            z = z + self.noise * torch.randn_like(z)
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16):
+            if noisy and self.noise > 0:
+                z = z + self.noise * torch.randn_like(z)
 
-        return self.decoder(z)
+            return self.decoder(z)
 
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        z = self.encode(x)
-        y = self.decode(z)
-        return y, z
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16):
+            z = self.encode(x)
+            y = self.decode(z)
+            return y, z
 
 
 class AutoEncoderLoss(nn.Module):
