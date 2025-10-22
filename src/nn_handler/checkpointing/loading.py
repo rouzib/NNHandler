@@ -135,20 +135,22 @@ def load(NNHandler,
     # Check if the saved state dict has 'module.' prefix (saved from DDP/DP)
     saved_parallel = any(k.startswith('module.') for k in model_state_dict.keys())
     # Check if the *current* handler's model is DDP/DP wrapped
-    current_parallel = False # isinstance(handler._model, (DDP, nn.DataParallel))
+    current_parallel = isinstance(handler._model, (DDP, nn.DataParallel))
 
     load_state_dict = model_state_dict  # Start with original
-    if saved_parallel and not current_parallel:
+
+    # Load into module directly so this is not needed.
+    if saved_parallel: # and not current_parallel:
         # Saved with wrapper, loading into raw model -> strip 'module.'
         # This case is less common if loading into a DDP setup correctly.
         load_state_dict = OrderedDict((k[len("module."):], v) for k, v in model_state_dict.items())
         handler.log(" Stripped 'module.' prefix from saved model state_dict for loading into non-parallel model.",
                     logging.DEBUG)
-    elif not saved_parallel and current_parallel:
-        # Saved raw, loading into wrapped model -> add 'module.'
-        load_state_dict = OrderedDict(('module.' + k, v) for k, v in model_state_dict.items())
-        handler.log(" Added 'module.' prefix to saved model state_dict for loading into parallel model.", logging.DEBUG)
-    # Else: keys match (both parallel or both raw), use load_state_dict as is
+    # elif not saved_parallel and current_parallel:
+    #     # Saved raw, loading into wrapped model -> add 'module.'
+    #     load_state_dict = OrderedDict(('module.' + k, v) for k, v in model_state_dict.items())
+    #     handler.log(" Added 'module.' prefix to saved model state_dict for loading into parallel model.", logging.DEBUG)
+    # # Else: keys match (both parallel or both raw), use load_state_dict as is
 
     # Load into the underlying module
     try:
