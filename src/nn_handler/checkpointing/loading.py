@@ -135,7 +135,7 @@ def load(NNHandler,
     # Check if the saved state dict has 'module.' prefix (saved from DDP/DP)
     saved_parallel = any(k.startswith('module.') for k in model_state_dict.keys())
     # Check if the *current* handler's model is DDP/DP wrapped
-    current_parallel = isinstance(handler._model, (DDP, nn.DataParallel))
+    current_parallel = False # isinstance(handler._model, (DDP, nn.DataParallel))
 
     load_state_dict = model_state_dict  # Start with original
     if saved_parallel and not current_parallel:
