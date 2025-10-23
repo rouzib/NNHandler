@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 from tqdm.auto import tqdm
 
 
-def create_latent_dataset(model, dataset, batch_size=128, device=None, return_labels=False, pbar=True):
+def create_latent_dataset(model, dataset, batch_size=128, device=None, return_labels=False, pbar=True, obtain_latent_fn=None):
     """
     Runs dataset through the model's encoder to obtain latent vectors.
 
@@ -25,6 +25,9 @@ def create_latent_dataset(model, dataset, batch_size=128, device=None, return_la
     latents = []
     labels = []
 
+    if obtain_latent_fn is None:
+        obtain_latent_fn = lambda x: x
+
     with torch.no_grad():
         for data_tuple in tqdm(loader, disable=not pbar):
             # Handle datasets yielding (img,) or (img, label)
@@ -35,9 +38,8 @@ def create_latent_dataset(model, dataset, batch_size=128, device=None, return_la
             else:
                 imgs = data_tuple.to(device)
 
-            # For VAE-like models, encode() should output DiagonalGaussianDistribution and take the mean
             encoded = model.model.encode(imgs)
-            z = encoded.mean
+            z = obtain_latent_fn(encoded)
             latents.append(z.cpu())
 
     model.eval(True)
