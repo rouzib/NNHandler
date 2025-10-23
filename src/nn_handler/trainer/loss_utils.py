@@ -59,7 +59,7 @@ def _calculate_loss(nn_handler: 'NNHandler', model_output: Any, targets: Optiona
             raise RuntimeError("Score-based model requires an SDE to be set for loss calculation.")
         # Assumed signature: loss(data, sde, model, device, **kwargs)
         # Pass the unwrapped model for score-based loss functions
-        loss_args = [inputs, nn_handler.sde, nn_handler.module, nn_handler._device]
+        loss_args = [inputs, nn_handler.sde, nn_handler.model, nn_handler._device]
     else:
         raise ValueError(f"Unsupported ModelType for loss: {_model_type}")
 
