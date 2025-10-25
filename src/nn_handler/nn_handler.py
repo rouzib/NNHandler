@@ -1502,3 +1502,19 @@ class NNHandler:
         solver = SdeSolver(self)
         return solver.solve(shape, steps, corrector_steps, condition, likelihood_score_fn, guidance_factor, apply_ema,
                             bar, stop_on_NaN, patch_size, stride, patch_chunk, corrector_snr, on_step)
+
+    def __getattr__(self, item):
+        """
+        Overrides the default behavior of attribute access in order to delegate the
+        resolution of undefined attributes to another object.
+
+        The `__getattr__` method is only called when the attribute requested is not found
+        in the current object. In this implementation, it forwards the request to the
+        `model` attribute of the instance, enabling dynamic delegation.
+
+        :param item: The name of the attribute being accessed.
+        :type item: str
+        :return: The value of the requested attribute, resolved from the `module` attribute.
+        :rtype: Any
+        """
+        return getattr(self.model, item)
