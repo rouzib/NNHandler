@@ -67,11 +67,16 @@ class AutoEncoder(nn.Module):
 
             return self.decoder(z)
 
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
+    def train_fn(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16):
             z = self.encode(x)
             y = self.decode(z)
             return y, z
+
+    def forward(self, x: Tensor) -> Tensor:
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16):
+            x = self.decode(x)
+            return x
 
 
 class AutoEncoderLoss(nn.Module):

@@ -1,5 +1,6 @@
 from typing import Any, Dict
 import math
+import inspect
 
 import torch
 
@@ -8,9 +9,8 @@ from .loss_utils import _calculate_loss, _calculate_metrics
 from ..utils import ModelType, autocast
 
 
-def _train_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, accumulation_steps: int, use_amp: bool) -> \
-        tuple[
-            float, Dict[str, float]]:
+def _train_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, accumulation_steps: int, use_amp: bool,
+                train_fn_name: str = None) -> tuple[float, Dict[str, float]]:
     """Performs a single training step on the local batch (forward, loss, backward).
        Returns the local loss item (un-normalized) and local metrics dict.
     """
@@ -18,6 +18,12 @@ def _train_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, accumul
         raise RuntimeError("Model, optimizer, and loss function must be set for training.")
 
     nn_handler._model.train()  # Ensure model is in training mode
+
+    # Find training function
+    if train_fn_name is not None:
+        train_fn = getattr(nn_handler._model, train_fn_name)
+    else:
+        train_fn = nn_handler.model
 
     # Prepare batch data for the current device
     _model_type = nn_handler._model_type
@@ -34,7 +40,7 @@ def _train_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, accumul
             # Score-based loss often calls the model internally
             model_output = None  # Placeholder
         else:
-            model_output = nn_handler.model(inputs, **additional_params)
+            model_output = train_fn(inputs, **additional_params)
 
         # Loss calculation
         loss_val = _calculate_loss(nn_handler, model_output, targets, inputs, current_epoch)
@@ -74,7 +80,8 @@ def _train_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, accumul
     return loss.item() * accumulation_steps, batch_metrics
 
 
-def _val_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int) -> tuple[float, Dict[str, float]]:
+def _val_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int, train_fn_name: str = None) -> tuple[
+    float, Dict[str, float]]:
     """Performs a single validation step on the local batch.
        Returns the local loss item and local metrics dict.
     """
@@ -82,6 +89,12 @@ def _val_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int) -> tuple[
         raise RuntimeError("Model and loss function must be set for validation.")
 
     nn_handler.eval(activate=True, log=False)  # Ensure model is in evaluation mode
+
+    # Find training function
+    if train_fn_name is not None:
+        train_fn = getattr(nn_handler._model, train_fn_name)
+    else:
+        train_fn = nn_handler.model
 
     _model_type = nn_handler._model_type
     batch_data = _prepare_batch(nn_handler, batch)
@@ -95,7 +108,7 @@ def _val_step(nn_handler: 'NNHandler', batch: Any, current_epoch: int) -> tuple[
             model_output = None  # Loss handles model call
         else:
             # Use self.model for forward pass (handles DDP/DP wrapper)
-            model_output = nn_handler.model(inputs, **additional_params)
+            model_output = train_fn(inputs, **additional_params)
 
         # Loss calculation
         loss_val = _calculate_loss(nn_handler, model_output, targets, inputs, current_epoch)

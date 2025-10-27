@@ -4,6 +4,7 @@ from collections import defaultdict
 import time
 from typing import Optional, Dict, Union
 import math
+import inspect
 
 import torch
 import torch.distributed as dist
@@ -90,6 +91,11 @@ def train(nn_handler: 'NNHandler',
     nn_handler.log(f"  Grad Clipping Norm:  {gradient_clipping_norm}")
     nn_handler.log(f"  Validate Every:      {validate_every}")
     nn_handler.log(f"  Seed:                {nn_handler._seed}")
+
+    # Check if model has a train or training method and specify training function
+    has_train = hasattr(nn_handler.model, "train_fn") and callable(getattr(nn_handler.model, "train_fn", None))
+    has_training = hasattr(nn_handler.model, "training") and callable(getattr(nn_handler.model, "training", None))
+    train_fn = "train" if has_train else "training" if has_training else None
 
     # Initialize EMA if needed (on all ranks, state loaded later if applicable)
     nn_handler._ema = None
@@ -193,13 +199,14 @@ def train(nn_handler: 'NNHandler',
             nn_handler._run_callbacks('on_train_batch_begin', batch=batch_idx, logs=batch_logs)
 
             # --- Train Step (Forward, Loss, Backward) ---
-            sync_ctx = contextlib.nullcontext() # skip mGPU sync for gradient accumulation steps > 1
+            sync_ctx = contextlib.nullcontext()  # skip mGPU sync for gradient accumulation steps > 1
             is_accumulation_step = (batch_idx + 1) % gradient_accumulation_steps == 0
             if gradient_accumulation_steps > 1 and not is_accumulation_step:
                 sync_ctx = nn_handler._model.no_sync() if nn_handler._distributed else contextlib.nullcontext()
             with sync_ctx:
                 local_loss_item, local_metrics_items = _train_step(nn_handler, batch_data, epoch,
-                                                                   gradient_accumulation_steps, effective_use_amp)
+                                                                   gradient_accumulation_steps, effective_use_amp,
+                                                                   train_fn)
 
             # --- Accumulate Local Results ---
             if not math.isnan(local_loss_item):
@@ -348,7 +355,7 @@ def train(nn_handler: 'NNHandler',
                     nn_handler._run_callbacks('on_val_batch_begin', batch=val_batch_idx, logs=batch_logs)
 
                     # --- Val Step ---
-                    local_loss_item, local_metrics_items = _val_step(nn_handler, val_batch_data, epoch)
+                    local_loss_item, local_metrics_items = _val_step(nn_handler, val_batch_data, epoch, train_fn)
 
                     # --- Accumulate Local Validation Results ---
                     if not math.isnan(local_loss_item):
