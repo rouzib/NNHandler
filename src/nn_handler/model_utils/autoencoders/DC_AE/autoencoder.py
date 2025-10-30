@@ -126,10 +126,14 @@ class AutoEncoderLoss(nn.Module):
         for loss in self.losses:
             if loss == "mse":
                 l = (x - y).square().mean()
+            elif loss == "mse_log":
+                l = ((x - y).square() + 1).log().mean()
             elif loss == "mse_norm":
                 l = ((x - y) / (x.abs() + self.norm_factor)).square().mean()
             elif loss == "mae":
                 l = (x - y).abs().mean()
+            elif loss == "mae_log":
+                l = ((x - y).abs() + 1).log().mean()
             elif loss == "mae_norm":
                 l = ((x - y) / (x.abs() + self.norm_factor)).abs().mean()
             elif loss == "vmse":
