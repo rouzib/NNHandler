@@ -94,6 +94,7 @@ class AutoEncoderLoss(nn.Module):
             self,
             losses=None,
             weights=None,
+            norm_factor: float = 1.0,
             device: Optional[torch.device] = None
     ):
         super().__init__()
@@ -105,6 +106,7 @@ class AutoEncoderLoss(nn.Module):
         assert len(losses) == len(weights)
 
         self.losses = list(losses)
+        self.norm_factor = norm_factor
         self.register_buffer("weights", torch.as_tensor(weights, device=device))
 
     def forward(self, autoencoder_output, x: Tensor, **kwargs) -> Tensor:
@@ -125,11 +127,11 @@ class AutoEncoderLoss(nn.Module):
             if loss == "mse":
                 l = (x - y).square().mean()
             elif loss == "mse_norm":
-                l = ((x - y) / (x.abs() + 1e-1)).square().mean()
+                l = ((x - y) / (x.abs() + self.norm_factor)).square().mean()
             elif loss == "mae":
                 l = (x - y).abs().mean()
             elif loss == "mae_norm":
-                l = ((x - y) / (x.abs() + 1e-1)).abs().mean()
+                l = ((x - y) / (x.abs() + self.norm_factor)).abs().mean()
             elif loss == "vmse":
                 x = rearrange(x, "B C ... -> B C (...)")
                 y = rearrange(y, "B C ... -> B C (...)")
