@@ -132,7 +132,7 @@ class RankMemCachedH5Dataset(Dataset):
         self.path = path
         self.x_key = x_key
         self.y_key = y_key
-        self.aux_keys = aux_keys
+        self.aux_keys = aux_keys if aux_keys is not None else []
         self.mode = mode
         self.x_dtype = x_dtype
         self.y_dtype = y_dtype
@@ -175,10 +175,7 @@ class RankMemCachedH5Dataset(Dataset):
                                     rdcc_nbytes=rdcc_nbytes, rdcc_nslots=rdcc_nslots, rdcc_w0=rdcc_w0)
         self._x_cache: Optional[torch.Tensor] = None
         self._y_cache: Optional[torch.Tensor] = None
-        if self.aux_keys is not None:
-            self._aux_caches: Optional[Dict[str, torch.tensor]] = {key: None for key in self.aux_keys}
-        else:
-            self._aux_caches = {}
+        self._aux_caches: Optional[Dict[str, torch.tensor]] = {key: None for key in self.aux_keys}
         self._preload_shard()
 
     def _preload_shard(self) -> None:
