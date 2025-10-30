@@ -175,7 +175,7 @@ class RankMemCachedH5Dataset(Dataset):
                                     rdcc_nbytes=rdcc_nbytes, rdcc_nslots=rdcc_nslots, rdcc_w0=rdcc_w0)
         self._x_cache: Optional[torch.Tensor] = None
         self._y_cache: Optional[torch.Tensor] = None
-        self._aux_caches: Optional[Dict[str, torch.tensor]] = {key: None for key in self.aux_keys}
+        self._aux_caches: Optional[Dict[str, torch.tensor]] = {key: None for key in self.aux_keys} if self.aux_keys else {}
 
         self._preload_shard()
 
