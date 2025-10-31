@@ -12,5 +12,6 @@ References:
 """
 
 from .autoencoder import AutoEncoder, AutoEncoderLoss
+from .autoencoder_KL import AutoEncoderKL, AutoEncoderKLLoss
 
-__all__ = ["AutoEncoder", "AutoEncoderLoss"]
+__all__ = ["AutoEncoder", "AutoEncoderLoss", "AutoEncoderKL", "AutoEncoderKLLoss"]

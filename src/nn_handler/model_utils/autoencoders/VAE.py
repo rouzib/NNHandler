@@ -37,10 +37,12 @@ class DiagonalGaussianDistribution:
 
     @torch.autocast("cuda", torch.float32)
     def kl(self) -> torch.Tensor:
-        return 0.5 * torch.sum(
-            torch.pow(self.mean, 2) + torch.exp(self.logvar) - 1.0 - self.logvar,
-            dim=[1, 2, 3]
-        )
+        kl = torch.pow(self.mean, 2) + torch.exp(self.logvar) - 1.0 - self.logvar
+        return 0.5 * torch.sum(kl, dim=tuple(range(1, kl.dim())))
+
+
+    def __repr__(self):
+        return f"DiagonalGaussianDistribution(mean={self.mean}, logvar={self.logvar})"
 
 
 class AutoencoderKL(nn.Module):
