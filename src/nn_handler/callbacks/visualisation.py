@@ -54,7 +54,7 @@ class BasePredictionVisualizer(Callback):
                  val_loader: Optional[DataLoader] = None,
                  use_fixed_batch: bool = False,
                  fixed_batch: Optional[Any] = None,
-                 get_predictions_fn: Optional[Callable] = None, ):
+                 get_predictions_fn: Optional[Callable] = None, **kwargs):
         super().__init__()
         self.log_freq_epoch = log_freq_epoch
         self.num_samples = num_samples
