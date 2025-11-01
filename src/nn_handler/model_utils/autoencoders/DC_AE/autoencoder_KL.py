@@ -37,6 +37,7 @@ class AutoEncoderKL(nn.Module):
                                image_shape[1] // self.encoder_compression_factor)
         self.quant = nn.Linear(self.proj_in_params, 2 * lat_size)
         self.post_quant = nn.Linear(lat_size, self.proj_in_params)
+        self.sample = sample
 
     def encode(self, x: Tensor) -> DiagonalGaussianDistribution:
         with torch.autocast(device_type="cuda", dtype=torch.float16,
