@@ -11,8 +11,8 @@ from ..VAE import DiagonalGaussianDistribution
 
 class AutoEncoderKL(nn.Module):
     def __init__(self, in_channels: int, lat_channels: int, lat_size: int, image_shape: List[int] = None,
-                 spatial: int = 2, saturation: str = None, noise: float = 0.0, encoder_only=None, decoder_only=None,
-                 use_fp16=False, **kwargs):
+                 spatial: int = 2, saturation: str = None, noise: float = 0.0, sample: bool = True, encoder_only=None,
+                 decoder_only=None, use_fp16=False, **kwargs):
         super().__init__()
 
         if image_shape is None:
@@ -39,13 +39,15 @@ class AutoEncoderKL(nn.Module):
         self.post_quant = nn.Linear(lat_size, self.proj_in_params)
 
     def encode(self, x: Tensor) -> DiagonalGaussianDistribution:
-        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16 or torch.is_autocast_enabled()):
+        with torch.autocast(device_type="cuda", dtype=torch.float16,
+                            enabled=self.use_fp16 or torch.is_autocast_enabled()):
             z = self.encoder(x)
             z = self.quant(z.flatten(start_dim=1))
             return DiagonalGaussianDistribution(z)
 
     def decode(self, z: Tensor, noisy: bool = True) -> Tensor:
-        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16 or torch.is_autocast_enabled()):
+        with torch.autocast(device_type="cuda", dtype=torch.float16,
+                            enabled=self.use_fp16 or torch.is_autocast_enabled()):
             if noisy and self.noise > 0:
                 z = z + self.noise * torch.randn_like(z)
 
@@ -53,9 +55,10 @@ class AutoEncoderKL(nn.Module):
             return self.decoder(z)
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_fp16 or torch.is_autocast_enabled()):
+        with torch.autocast(device_type="cuda", dtype=torch.float16,
+                            enabled=self.use_fp16 or torch.is_autocast_enabled()):
             posterior = self.encode(x)
-            z = posterior.sample()
+            z = posterior.sample() if self.sample else posterior.mean
             y = self.decode(z)
             return y, posterior.kl()
 
@@ -121,7 +124,6 @@ class AutoEncoderKLLoss(nn.Module):
                 raise ValueError(f"unknown loss '{loss}'.")
 
             values.append(l)
-
 
         values = torch.stack(values)
 
