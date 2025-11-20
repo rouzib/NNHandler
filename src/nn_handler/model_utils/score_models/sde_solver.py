@@ -134,14 +134,20 @@ class SdeSolver:
             Tensor: Combined score that incorporates model-driven and likelihood-based evaluations.
         """
         if condition is None: condition = []
-        if likelihood_score_fn is not None:
-            likelihood_score = likelihood_score_fn(t, x)
-        else:
-            likelihood_score = torch.zeros_like(x)
-        if (patch_size is not None) and (stride is not None):
+        is_patch_diffusion = self.perform_checks(patch_size, stride)
+
+        if is_patch_diffusion:
             score = patch_score_vectorized(self.nn_handler, t, x, patch_size, stride, patch_chunk, *condition)
         else:
             score = self.nn_handler.score(t, x, *condition)
+
+        if likelihood_score_fn is not None:
+            if is_patch_diffusion:
+                likelihood_score = likelihood_score_fn(t, x, score)
+            else:
+                likelihood_score = likelihood_score_fn(t, x)
+        else:
+            likelihood_score = torch.zeros_like(x)
         return score + guidance_factor * likelihood_score
 
     def drift(self, t: Tensor, x: Tensor, condition: Optional[list] = None, patch_size: int = None,
@@ -268,7 +274,7 @@ class SdeSolver:
 
         # Define a zero likelihood function if none provided
         if likelihood_score_fn is None:
-            def zero_likelihood_score(t, x): return torch.zeros_like(x)
+            def zero_likelihood_score(t, x, patch_score=None): return torch.zeros_like(x)
 
             likelihood_score_fn = zero_likelihood_score
 
