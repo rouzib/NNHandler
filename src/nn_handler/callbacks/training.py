@@ -109,6 +109,17 @@ class ParamScheduler(Callback):
         parameter_name (str): The name of the parameter to be updated.
         schedule (Schedule): The schedule to apply to the parameter.
         verbose (int): Verbosity mode. >0 -> prints msg
+
+    Example:
+        from src.nn_handler.callbacks.training import ParamScheduler
+        from src.nn_handler.model_utils.scheduler import LinearSchedule
+
+        # Schedule noise from 0.1 down to 0 over 500 epochs
+        noise_schedule = LinearSchedule(start_value=0.1, end_value=0.0, start_epoch=0, end_epoch=500)
+
+        # Add the callback to the handler
+        model.add_callback(ParamScheduler(parameter_name='noise', schedule=noise_schedule, verbose=1))
+
     """
     def __init__(self, parameter_name: str, schedule: Schedule, verbose: int = 0):
         super().__init__()
