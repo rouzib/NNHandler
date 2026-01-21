@@ -1,10 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import torch
 from einops import rearrange
 from torch import nn, Tensor, cosine_similarity
 from typing_extensions import Unpack
 
+from src.nn_handler.model_utils.autoencoders.VAE import DiagonalGaussianDistribution
 from .blocks import DCEncoder, DCDecoder
 from ..VAE import DiagonalGaussianDistribution
 
@@ -55,13 +56,18 @@ class AutoEncoderKL(nn.Module):
             z = self.post_quant(z).reshape(-1, *self.proj_out_shape)
             return self.decoder(z)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(self, x: Tensor, mode="train") -> DiagonalGaussianDistribution | Tensor | tuple[Tensor, Tensor]:
         with torch.autocast(device_type="cuda", dtype=torch.float16,
                             enabled=self.use_fp16 or torch.is_autocast_enabled()):
-            posterior = self.encode(x)
-            z = posterior.sample() if self.sample else posterior.mean
-            y = self.decode(z)
-            return y, posterior.kl()
+            if mode == "encode":
+                return self.encode(x)
+            elif mode == "decode":
+                return self.decode(x)
+            else:
+                posterior = self.encode(x)
+                z = posterior.sample() if self.sample else posterior.mean
+                y = self.decode(z)
+                return y, posterior.kl()
 
 
 class AutoEncoderKLLoss(nn.Module):
