@@ -77,11 +77,13 @@ class AutoEncoderKLLoss(nn.Module):
             losses=None,
             weights=None,
             beta: Union[float, Schedule] = 1.0,
-            device: Optional[torch.device] = None, 
+            device: Optional[torch.device] = None,
+            debug: bool = False
     ):
         super().__init__()
 
         self.beta = beta
+        self.debug = debug
 
         if weights is None:
             weights = [1.0]
@@ -136,5 +138,7 @@ class AutoEncoderKLLoss(nn.Module):
             values.append(l)
 
         values = torch.stack(values)
+        if self.debug:
+            print(f"{current_beta = }")
 
         return current_beta * kl.mean() + torch.vdot(self.other_weights, values)
