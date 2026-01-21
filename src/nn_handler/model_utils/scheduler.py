@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import math
+from typing import List
+
 
 class Schedule(ABC):
     """
@@ -10,11 +12,6 @@ class Schedule(ABC):
     Subclasses must implement the `get_value` method to specify how the value is
     computed for a given epoch. The `plot` method can be used for visualizing the
     schedule's values over a range of epochs.
-
-    :ivar attribute1: This class does not define attributes, but subclasses may
-        define specific attributes (e.g., to store parameters controlling the
-        schedule). This section is illustrative.
-    :type attribute1: Any
     """
     @abstractmethod
     def get_value(self, epoch: int) -> float:
@@ -65,21 +62,43 @@ class Schedule(ABC):
         plt.show()
 
 
+class ConstantSchedule(Schedule):
+    """
+    Returns a constant value regardless of the epoch.
+    """
+    def __init__(self, value: float):
+        self.value = value
+
+    def get_value(self, epoch: int) -> float:
+        return self.value
+
+
+class LinearSchedule(Schedule):
+    """
+    Linearly interpolates between a start and end value over a range of epochs.
+    """
+    def __init__(self, start_value: float, end_value: float, start_epoch: int, end_epoch: int):
+        self.start_value = start_value
+        self.end_value = end_value
+        self.start_epoch = start_epoch
+        self.end_epoch = end_epoch
+
+    def get_value(self, epoch: int) -> float:
+        if epoch < self.start_epoch:
+            return self.start_value
+        elif epoch >= self.end_epoch:
+            return self.end_value
+        else:
+            progress = (epoch - self.start_epoch) / (self.end_epoch - self.start_epoch)
+            return self.start_value + progress * (self.end_value - self.start_value)
+
+
 class LogLinearSchedule(Schedule):
     """
     Represents a logarithmic linear schedule for adjusting values over epochs.
 
     Provides a flexible schedule where values are interpolated on a logarithmic
     scale between a starting and ending point over a specified range of epochs.
-
-    :ivar start_value: The initial value of the schedule.
-    :type start_value: float
-    :ivar end_value: The final value of the schedule.
-    :type end_value: float
-    :ivar start_epoch: The epoch at which the schedule begins.
-    :type start_epoch: int
-    :ivar end_epoch: The epoch at which the schedule ends.
-    :type end_epoch: int
     """
     def __init__(self, start_value: float, end_value: float, start_epoch: int, end_epoch: int):
         self.start_value = start_value
@@ -97,3 +116,51 @@ class LogLinearSchedule(Schedule):
             log_end = math.log(self.end_value)
             progress = (epoch - self.start_epoch) / (self.end_epoch - self.start_epoch)
             return math.exp(log_start + progress * (log_end - log_start))
+
+
+class CosineSchedule(Schedule):
+    """
+    Cosine annealing schedule.
+    Interpolates between start_value and end_value using a cosine function.
+    """
+    def __init__(self, start_value: float, end_value: float, start_epoch: int, end_epoch: int):
+        self.start_value = start_value
+        self.end_value = end_value
+        self.start_epoch = start_epoch
+        self.end_epoch = end_epoch
+
+    def get_value(self, epoch: int) -> float:
+        if epoch < self.start_epoch:
+            return self.start_value
+        elif epoch >= self.end_epoch:
+            return self.end_value
+        else:
+            progress = (epoch - self.start_epoch) / (self.end_epoch - self.start_epoch)
+            return self.end_value + 0.5 * (self.start_value - self.end_value) * (1 + math.cos(math.pi * progress))
+
+
+class StepSchedule(Schedule):
+    """
+    Decays the value by gamma every step_size epochs.
+    """
+    def __init__(self, start_value: float, step_size: int, gamma: float = 0.1):
+        self.start_value = start_value
+        self.step_size = step_size
+        self.gamma = gamma
+
+    def get_value(self, epoch: int) -> float:
+        return self.start_value * (self.gamma ** (epoch // self.step_size))
+
+
+class MultiStepSchedule(Schedule):
+    """
+    Decays the value by gamma once the number of epochs reaches one of the milestones.
+    """
+    def __init__(self, start_value: float, milestones: List[int], gamma: float = 0.1):
+        self.start_value = start_value
+        self.milestones = sorted(milestones)
+        self.gamma = gamma
+
+    def get_value(self, epoch: int) -> float:
+        count = sum(1 for m in self.milestones if epoch >= m)
+        return self.start_value * (self.gamma ** count)
