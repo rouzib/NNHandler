@@ -70,9 +70,11 @@ class ModelCheckpoint(Callback):
 
     def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, Any]] = None):
         logs = logs or {}
-        base_filename = self.filepath.format(**logs)
+        format_logs = logs.copy()
+        format_logs['epoch'] = self._current_epoch
+        base_filename = self.filepath.format(**format_logs)
         filepath = base_filename if base_filename.endswith(".pth") else f"{base_filename}.pth"
-        # filepath = self.filepath.format(epoch=self._current_epoch, **logs)
+        
         if self.save_best_only:
             current = logs.get(self.monitor)
             if current is None:
