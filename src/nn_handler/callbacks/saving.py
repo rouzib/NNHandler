@@ -21,11 +21,13 @@ class ModelCheckpoint(Callback):
             the "best" according to the monitored quantity and mode.
         save_weights_only (bool): If True, then only the model's weights are saved
             (`model.state_dict()`), else the full handler state is saved.
+        save_freq (int): Frequency (in epochs) at which to save the model.
+            If `save_best_only` is True, this parameter is ignored.
         verbose (int): Verbosity mode, 0 or 1.
     """
 
     def __init__(self, filepath: str = ".", monitor: str = 'val_loss', mode: str = 'min',
-                 save_best_only: bool = True, save_weights_only: bool = False, verbose: int = 0):
+                 save_best_only: bool = True, save_weights_only: bool = False, save_freq: int = 1, verbose: int = 0):
         super().__init__()
         self._mode = None
         self.monitor_op = None
@@ -34,6 +36,7 @@ class ModelCheckpoint(Callback):
         self.monitor = monitor
         self.save_best_only = save_best_only
         self.save_weights_only = save_weights_only
+        self.save_freq = save_freq
         self.verbose = verbose
 
         if mode not in ['min', 'max']:
@@ -95,12 +98,13 @@ class ModelCheckpoint(Callback):
                             f'{self.best.item():.5f}')
 
         else:
-            if self.verbose > 0:
-                print(f'Epoch {self._current_epoch}: saving model to {filepath}')
-            if self.handler.logger:
-                self.handler.logger.info(
-                    f'{self.__class__.__name__}: (Epoch {self._current_epoch}) saving model to {filepath}')
-            self._save_model(filepath)
+            if self._current_epoch % self.save_freq == 0:
+                if self.verbose > 0:
+                    print(f'Epoch {self._current_epoch}: saving model to {filepath}')
+                if self.handler.logger:
+                    self.handler.logger.info(
+                        f'{self.__class__.__name__}: (Epoch {self._current_epoch}) saving model to {filepath}')
+                self._save_model(filepath)
 
     def _save_model(self, filepath: str):
         if self.handler._distributed and self.handler._rank != 0:
@@ -124,6 +128,7 @@ class ModelCheckpoint(Callback):
                 'monitor': self.monitor,
                 'save_best_only': self.save_best_only,
                 'save_weights_only': self.save_weights_only,
+                'save_freq': self.save_freq,
                 'verbose': self.verbose,
                 }  # Save best value as standard python type
 
@@ -135,4 +140,5 @@ class ModelCheckpoint(Callback):
         self.monitor = state_dict.get('monitor', self.monitor)
         self.save_best_only = state_dict.get('save_best_only', self.save_best_only)
         self.save_weights_only = state_dict.get('save_weights_only', self.save_weights_only)
+        self.save_freq = state_dict.get('save_freq', self.save_freq)
         self.verbose = state_dict.get('verbose', self.verbose)
