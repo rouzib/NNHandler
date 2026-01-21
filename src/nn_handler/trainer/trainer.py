@@ -15,6 +15,9 @@ from .steps import _train_step, _val_step
 from ..checkpointing.trainer_saving import auto_save_epoch
 from ..utils import _amp_available, _ema_available, ExponentialMovingAverage, GradScaler, aggregate_loss, \
     aggregate_metrics
+from ..utils.ddp_helpers import broadcast_if_ddp
+
+
 
 
 def train(nn_handler: 'NNHandler',
