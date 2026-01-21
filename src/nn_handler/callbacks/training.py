@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import torch
 
 from .base import Callback
-
+from ..model_utils.scheduler import Schedule
 
 class EarlyStopping(Callback):
     """Stop training when a monitored quantity has stopped improving.
@@ -92,3 +92,36 @@ class EarlyStopping(Callback):
         self.stopped_epoch = state_dict.get('stopped_epoch', 0)
         self.best = torch.tensor(state_dict.get('best', self.best.item()))
         # best_weights are restored via handler load or ModelCheckpoint
+
+
+class ParamScheduler(Callback):
+    """
+    The ParamScheduler class is a callback for dynamically updating a specified parameter of a
+    module based on a provided schedule during training epochs.
+
+    This class allows flexible parameter adjustment during model training by utilizing a defined
+    schedule for the parameter. Users can specify the name of the parameter to update, a schedule
+    object that dictates the parameter's values at different epochs, and verbosity settings for
+    logging parameter updates. The updated values of the parameter are applied to the corresponding
+    module when an epoch begins.
+
+    Args:
+        parameter_name (str): The name of the parameter to be updated.
+        schedule (Schedule): The schedule to apply to the parameter.
+        verbose (int): Verbosity mode. >0 -> prints msg
+    """
+    def __init__(self, parameter_name: str, schedule: Schedule, verbose: int = 0):
+        super().__init__()
+        self.parameter_name = parameter_name
+        self.schedule = schedule
+        self.verbose = verbose
+
+    def on_epoch_begin(self, epoch: int, logs=None):
+        value = self.schedule.get_value(epoch)
+        if hasattr(self.handler.module, self.parameter_name):
+            setattr(self.handler.module, self.parameter_name, value)
+            msg = f"Epoch {epoch}: set '{self.parameter_name}' to {value:.6f}"
+            if self.verbose > 0:
+                print(msg)
+            if self.handler.logger:
+                self.handler.logger.info(msg)
