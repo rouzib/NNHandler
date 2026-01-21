@@ -2,12 +2,11 @@ from typing import List, Optional, Union
 
 import torch
 from einops import rearrange
-from torch import nn, Tensor, cosine_similarity
-from typing_extensions import Unpack
+from torch import nn, Tensor
 
-from src.nn_handler.model_utils.autoencoders.VAE import DiagonalGaussianDistribution
 from .blocks import DCEncoder, DCDecoder
 from ..VAE import DiagonalGaussianDistribution
+from ...scheduler import Schedule
 
 
 class AutoEncoderKL(nn.Module):
@@ -77,8 +76,8 @@ class AutoEncoderKLLoss(nn.Module):
             self,
             losses=None,
             weights=None,
-            beta: float = 1.0,
-            device: Optional[torch.device] = None
+            beta: Union[float, Schedule] = 1.0,
+            device: Optional[torch.device] = None, 
     ):
         super().__init__()
 
@@ -90,9 +89,8 @@ class AutoEncoderKLLoss(nn.Module):
             losses = ["mse"]
         assert len(losses) == len(weights)
 
-        weights.insert(0, self.beta)
         self.losses = list(losses)
-        self.register_buffer("weights", torch.as_tensor(weights, device=device))
+        self.register_buffer("other_weights", torch.as_tensor(weights, device=device))
 
     def forward(self, autoencoder_output, x: Tensor, **kwargs) -> Tensor:
         r"""
@@ -106,8 +104,13 @@ class AutoEncoderKLLoss(nn.Module):
 
         y, kl = autoencoder_output
 
-        values = [kl.mean()]
+        if isinstance(self.beta, Schedule):
+            epoch = kwargs.get("epoch", None)
+            current_beta = self.beta.get_value(epoch if epoch is not None else 0)
+        else:
+            current_beta = self.beta
 
+        values = []
         for loss in self.losses:
             if loss == "mse":
                 l = (x - y).square().mean()
@@ -134,4 +137,4 @@ class AutoEncoderKLLoss(nn.Module):
 
         values = torch.stack(values)
 
-        return torch.vdot(self.weights, values)
+        return current_beta * kl.mean() + torch.vdot(self.other_weights, values)
