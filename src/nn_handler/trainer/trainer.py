@@ -133,6 +133,7 @@ def train(nn_handler: 'NNHandler',
     final_epoch_logs_agg = {}
 
     for epoch in range(start_epoch, total_epochs):
+        epoch = broadcast_if_ddp(epoch, src=0)
         epoch_start_time = time.time()
         current_epoch_1_based = epoch + 1
         # Logs for this epoch, start empty, populated by train/val/callbacks
