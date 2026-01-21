@@ -139,6 +139,6 @@ class AutoEncoderKLLoss(nn.Module):
 
         values = torch.stack(values)
         if self.debug:
-            print(f"{current_beta = }")
+            print(f"{current_beta = }, {epoch = }")
 
         return current_beta * kl.mean() + torch.vdot(self.other_weights, values)
