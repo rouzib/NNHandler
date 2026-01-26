@@ -116,10 +116,14 @@ class AutoEncoderKLLoss(nn.Module):
         for loss in self.losses:
             if loss == "mse":
                 l = (x - y).square().mean()
+            elif loss == "sse":
+                l = (x - y).square().sum()
             elif loss == "mse_log":
                 l = ((x - y).square() + 1).log().mean()
             elif loss == "mae":
                 l = (x - y).abs().mean()
+            elif loss == "sae":
+                l = (x - y).abs().sum()
             elif loss == "mae_norm":
                 l = ((x - y) / (x.abs() + self.norm_factor)).abs().mean()
             elif loss == "vmse":
